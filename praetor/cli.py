@@ -1,11 +1,14 @@
 import typer
 
+from praetor.commands import register_commands
+
 app = typer.Typer(help="Praetor — local-first task queue for coding agents.")
+register_commands(app)
 
 
 @app.callback()
 def main() -> None:
-    """Praetor root command. Subcommands are added in later phases."""
+    pass
 
 
 if __name__ == "__main__":
