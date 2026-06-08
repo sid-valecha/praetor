@@ -16,6 +16,7 @@ def detect_cycles(tasks: list[Task]) -> list[list[str]]:
     state: dict[str, str] = {}
     path: list[str] = []
     cycles: list[list[str]] = []
+
     def visit(task_id: str) -> None:
         marker = state.get(task_id)
         if marker == "visiting":
@@ -36,11 +37,17 @@ def detect_cycles(tasks: list[Task]) -> list[list[str]]:
 
 
 def propagate_blocked(tasks: list[Task]) -> list[str]:
-    blocking_ids = {task.id for task in tasks if task.status in {TaskStatus.failed, TaskStatus.blocked}}
+    blocking_ids = {
+        task.id for task in tasks if task.status in {TaskStatus.failed, TaskStatus.blocked}
+    }
     pending_tasks = [task for task in tasks if task.status is TaskStatus.pending]
     propagated: set[str] = set()
+
     def depends_on_blocked(task: Task) -> bool:
-        return any(dependency in blocking_ids or dependency in propagated for dependency in task.depends_on)
+        return any(
+            dependency in blocking_ids or dependency in propagated for dependency in task.depends_on
+        )
+
     while True:
         before = len(propagated)
         propagated.update(task.id for task in pending_tasks if depends_on_blocked(task))

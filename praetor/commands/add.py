@@ -30,7 +30,9 @@ def add_command(
     require_workspace(repo_root)
 
     task_id = _task_id_from_title(title)
-    dependencies = [dependency.strip() for dependency in depends_on.split(",") if dependency.strip()]
+    dependencies = [
+        dependency.strip() for dependency in depends_on.split(",") if dependency.strip()
+    ]
     task = Task(
         id=task_id,
         status=TaskStatus.pending,

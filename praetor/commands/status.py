@@ -38,7 +38,11 @@ def status_command() -> None:
     table.add_column("Verify")
 
     for task in tasks:
-        status = "ready" if task.status is TaskStatus.pending and task.id in ready_ids else task.status.value
+        status = (
+            "ready"
+            if task.status is TaskStatus.pending and task.id in ready_ids
+            else task.status.value
+        )
         table.add_row(
             task.id,
             Text(status, style=STATUS_STYLES[status]),
