@@ -1,0 +1,31 @@
+from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
+
+from praetor.adapters import MockAdapter
+from praetor.frontmatter import dump_task
+from praetor.models import Task, TaskResult, TaskStatus
+from praetor.runner import run_once
+from praetor.state import get_task, init_workspace
+
+
+class RaisingMockAdapter(MockAdapter):
+    def exec(self, prompt: str, cwd: Path, timeout_s: float | None = None) -> TaskResult:
+        raise RuntimeError("adapter failed")
+
+
+def test_runner_marks_failed_on_adapter_exception(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+    task = Task(
+        id="task-a",
+        status=TaskStatus.pending,
+        created=datetime(2026, 6, 7, 12, 0, tzinfo=UTC),
+        body="# task-a\n",
+    )
+    dump_task(task, tmp_path / ".praetor" / "tasks" / "task-a.md")
+
+    with pytest.raises(RuntimeError, match="adapter failed"):
+        run_once(tmp_path, RaisingMockAdapter())
+
+    assert get_task(tmp_path, "task-a").status is TaskStatus.failed

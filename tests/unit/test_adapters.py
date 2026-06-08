@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -47,3 +48,21 @@ def test_get_adapter_unknown_raises() -> None:
 
 def test_claude_adapter_has_correct_name() -> None:
     assert ClaudeCodeAdapter().name == "claude"
+
+
+def test_claude_adapter_returns_task_result_on_os_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def raise_file_not_found(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise FileNotFoundError("claude not found")
+
+    monkeypatch.setattr(subprocess, "run", raise_file_not_found)
+
+    result = ClaudeCodeAdapter().exec("prompt", tmp_path)
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "claude not found" in result.stderr
+    assert result.duration_ms >= 0
+    assert result.diff is None

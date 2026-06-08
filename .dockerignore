@@ -1,0 +1,9 @@
+.git
+__pycache__
+*.pyc
+.praetor
+.worktrees
+tests
+*.egg-info
+.python-version
+.venv
