@@ -25,10 +25,14 @@ def run_once(repo_root: Path, adapter: AgentAdapter) -> bool:
     task = ready_tasks[0]
     update_task_status(repo_root, task.id, TaskStatus.running)
 
-    context_path = repo_root / ".praetor" / "context.md"
-    context = context_path.read_text() if context_path.exists() else ""
-    prompt = render_task_prompt(task, context)
-    result = adapter.exec(prompt, cwd=repo_root)
+    try:
+        context_path = repo_root / ".praetor" / "context.md"
+        context = context_path.read_text() if context_path.exists() else ""
+        prompt = render_task_prompt(task, context)
+        result = adapter.exec(prompt, cwd=repo_root)
+    except Exception:
+        _mark_failed_and_propagate(repo_root, task.id)
+        raise
 
     log_path = repo_root / ".praetor" / "logs" / f"{task.id}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)

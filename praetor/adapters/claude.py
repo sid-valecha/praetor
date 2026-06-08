@@ -19,12 +19,12 @@ class ClaudeCodeAdapter:
                 text=True,
                 timeout=timeout_s,
             )
-        except subprocess.TimeoutExpired:
+        except (subprocess.TimeoutExpired, OSError) as exc:
             duration_ms = int((time.monotonic() - start) * 1000)
             return TaskResult(
                 exit_code=1,
                 stdout="",
-                stderr="timed out",
+                stderr=str(exc),
                 duration_ms=duration_ms,
                 diff=None,
             )
