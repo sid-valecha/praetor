@@ -2,6 +2,7 @@
 plan.md
 roadmap.md
 Handoff.md
+design-notes.md
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
