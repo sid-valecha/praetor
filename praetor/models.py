@@ -8,7 +8,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_valid
 
 class TaskStatus(StrEnum):
     pending = "pending"
-    ready = "ready"
     running = "running"
     pending_merge = "pending_merge"
     merge_failed = "merge_failed"

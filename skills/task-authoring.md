@@ -38,7 +38,7 @@ Every task file must include the current Praetor task schema so queued work can 
 | Field | Type | Default | Version | Notes |
 | --- | --- | --- | --- | --- |
 | `id` | string | none, required | v0 | Must match `.praetor/tasks/<id>.md`. |
-| `status` | enum string | `pending` | v0 | Use `pending`, `running`, `pending_merge`, `merge_failed`, `done`, `failed`, or `blocked`. Do not persist `ready`; readiness is derived. |
+| `status` | enum string | `pending` | v0 | Use `pending`, `running`, `pending_merge`, `merge_failed`, `done`, `failed`, or `blocked`. The DAG resolver and `praetor status` derive readiness from `pending` tasks whose dependencies are all `done`; readiness is not a persisted status. |
 | `depends_on` | list of task ids | `[]` | v0 | List every prerequisite task id. Empty list means no prerequisites. |
 | `parallel_ok` | boolean | `true` | v1 honored | Set `false` for unsafe or cross-cutting sibling work. |
 | `agent` | string | `claude` | v0 | Expected values are currently adapter names such as `claude`, `codex`, or `aider`; `praetor run --adapter` selects the runtime adapter. |

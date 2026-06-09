@@ -93,6 +93,8 @@ Each task has a `merge_strategy` field:
 
 The CLI `--merge-strategy` flag on `praetor run` overrides all tasks for that run, regardless of their per-task field. For example, `praetor run --max-parallel 4 --merge-strategy auto` attempts to auto-merge every task completed during that run, including tasks whose frontmatter says `merge_strategy: manual`.
 
+The `--merge-strategy` flag is only valid in parallel mode; passing it with `--max-parallel 1` is rejected with a clear error.
+
 `praetor merge` uses `git merge --no-ff --no-edit` from `praetor/<task-id>` into the base branch. It refuses to merge if the base repo has uncommitted changes, records conflicts in the task log, and leaves the task as `merge_failed` for retry.
 
 ## Worktrees
@@ -153,7 +155,7 @@ Summarize the files changed and include the verify output.
 | Field | Description |
 |---|---|
 | `id` | Stable task id; also used as the task filename stem. |
-| `status` | Persisted values are `pending`, `running`, `done`, `failed`, `blocked`, `pending_merge`, or `merge_failed`. `ready` is derived by the DAG resolver and status command; do not write it to task files. |
+| `status` | Persisted values are `pending`, `running`, `done`, `failed`, `blocked`, `pending_merge`, or `merge_failed`. The DAG resolver and `praetor status` derive readiness from `pending` tasks whose dependencies are all `done`; readiness is not a persisted status. |
 | `depends_on` | List of task ids that must be `done` before this task can run. |
 | `parallel_ok` | Whether this task may run concurrently with other ready tasks. Default: `true`. Set `false` for cross-cutting or exclusive work. |
 | `agent` | Intended agent for this task. Default: `claude`. `praetor run --adapter` selects the runtime adapter for the run. |

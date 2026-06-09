@@ -9,7 +9,6 @@ from praetor.models import Task, TaskResult, TaskStatus
 def test_task_status_values() -> None:
     assert [status.value for status in TaskStatus] == [
         "pending",
-        "ready",
         "running",
         "pending_merge",
         "merge_failed",

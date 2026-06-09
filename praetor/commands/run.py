@@ -42,6 +42,14 @@ def run_command(
         raise_usage_error("--max-parallel must be >= 1")
     if merge_strategy not in {None, "auto", "manual"}:
         raise_usage_error("--merge-strategy must be one of: auto, manual")
+    if merge_strategy is not None and max_parallel == 1:
+        raise typer.BadParameter(
+            "--merge-strategy only applies in parallel mode "
+            "(--max-parallel > 1). Sequential mode (the default "
+            "--max-parallel 1) runs tasks in your current checkout "
+            "without worktrees or merging. To use auto-merge, pass "
+            "--max-parallel N with N > 1."
+        )
 
     try:
         agent_adapter = get_adapter(adapter)
