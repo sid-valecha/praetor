@@ -31,10 +31,19 @@ def add_command(
             help="Whether this task may run concurrently with ready sibling tasks.",
         ),
     ] = True,
+    merge_strategy: Annotated[
+        str,
+        typer.Option(
+            "--merge-strategy",
+            help="Merge strategy for this task: auto or manual.",
+        ),
+    ] = "manual",
     agent: Annotated[str, typer.Option("--agent", help="Agent adapter name.")] = "claude",
 ) -> None:
     repo_root = Path.cwd()
     require_workspace(repo_root)
+    if merge_strategy not in {"auto", "manual"}:
+        raise typer.BadParameter("merge strategy must be one of: auto, manual")
 
     task_id = _task_id_from_title(title)
     dependencies = [
@@ -47,6 +56,7 @@ def add_command(
         parallel_ok=parallel_ok,
         agent=agent,
         verify=verify,
+        merge_strategy=merge_strategy,
         created=datetime.now(UTC),
         body=f"# {title}\n",
     )

@@ -89,6 +89,33 @@ def test_blocked_cascade_propagates_through_pending_dependents() -> None:
     assert propagate_blocked(tasks) == ["B", "C"]
 
 
+def test_pending_merge_does_not_satisfy_dependency() -> None:
+    tasks = [
+        make_task("A", status=TaskStatus.pending_merge),
+        make_task("B", depends_on=["A"]),
+    ]
+
+    assert compute_ready_set(tasks) == []
+
+
+def test_merge_failed_does_not_cascade() -> None:
+    tasks = [
+        make_task("A", status=TaskStatus.merge_failed),
+        make_task("B", depends_on=["A"]),
+    ]
+
+    assert propagate_blocked(tasks) == []
+
+
+def test_pending_merge_does_not_cascade() -> None:
+    tasks = [
+        make_task("A", status=TaskStatus.pending_merge),
+        make_task("B", depends_on=["A"]),
+    ]
+
+    assert propagate_blocked(tasks) == []
+
+
 def test_already_blocked_task_is_not_returned_by_blocked_propagation() -> None:
     tasks = [
         make_task("A", status=TaskStatus.failed),
@@ -109,6 +136,8 @@ def test_mixed_statuses_are_absent_from_ready_set() -> None:
     tasks = [
         make_task("pending"),
         make_task("running", status=TaskStatus.running),
+        make_task("pending-merge", status=TaskStatus.pending_merge),
+        make_task("merge-failed", status=TaskStatus.merge_failed),
         make_task("done", status=TaskStatus.done),
         make_task("failed", status=TaskStatus.failed),
         make_task("blocked", status=TaskStatus.blocked),

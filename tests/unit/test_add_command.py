@@ -45,3 +45,16 @@ def test_add_command_accepts_no_parallel_ok_flag(tmp_path: Path, monkeypatch) ->
 
     assert result.exit_code == 0
     assert added_task(tmp_path).parallel_ok is False
+
+
+def test_add_command_accepts_merge_strategy(tmp_path: Path, monkeypatch) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["add", "--title", "Auto merge", "--merge-strategy", "auto"],
+    )
+
+    assert result.exit_code == 0
+    assert added_task(tmp_path).merge_strategy == "auto"

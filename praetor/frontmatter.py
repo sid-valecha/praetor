@@ -12,6 +12,7 @@ FRONTMATTER_FIELDS = (
     "agent",
     "verify",
     "review",
+    "merge_strategy",
     "created",
 )
 

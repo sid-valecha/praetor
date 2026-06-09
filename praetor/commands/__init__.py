@@ -17,6 +17,7 @@ def register_commands(app: typer.Typer) -> None:
     from praetor.commands.add import add_command
     from praetor.commands.init import init_command
     from praetor.commands.logs import logs_command
+    from praetor.commands.merge import merge_command
     from praetor.commands.run import run_command
     from praetor.commands.status import status_command
 
@@ -24,4 +25,5 @@ def register_commands(app: typer.Typer) -> None:
     app.command("add")(add_command)
     app.command("status")(status_command)
     app.command("run")(run_command)
+    app.command("merge")(merge_command)
     app.command("logs")(logs_command)

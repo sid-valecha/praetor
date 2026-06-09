@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
@@ -10,6 +10,8 @@ class TaskStatus(StrEnum):
     pending = "pending"
     ready = "ready"
     running = "running"
+    pending_merge = "pending_merge"
+    merge_failed = "merge_failed"
     done = "done"
     failed = "failed"
     blocked = "blocked"
@@ -25,6 +27,7 @@ class Task(BaseModel):
     agent: str = "claude"
     verify: str | None = None
     review: str = "off"
+    merge_strategy: Literal["auto", "manual"] = "manual"
     created: datetime
     body: str = ""
 

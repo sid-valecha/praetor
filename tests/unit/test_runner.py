@@ -43,3 +43,18 @@ def test_drain_queue_raises_on_stale_running(tmp_path: Path) -> None:
 
     with pytest.raises(StaleRunningError, match="task-a"):
         drain_queue(tmp_path, MockAdapter())
+
+
+def test_drain_queue_allows_pending_merge_resting_state(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+    task = Task(
+        id="task-a",
+        status=TaskStatus.pending_merge,
+        created=datetime(2026, 6, 7, 12, 0, tzinfo=UTC),
+        body="# task-a\n",
+    )
+    dump_task(task, tmp_path / ".praetor" / "tasks" / "task-a.md")
+
+    drain_queue(tmp_path, MockAdapter())
+
+    assert get_task(tmp_path, "task-a").status is TaskStatus.pending_merge

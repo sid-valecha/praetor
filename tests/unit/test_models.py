@@ -11,6 +11,8 @@ def test_task_status_values() -> None:
         "pending",
         "ready",
         "running",
+        "pending_merge",
+        "merge_failed",
         "done",
         "failed",
         "blocked",
@@ -29,6 +31,7 @@ def test_task_accepts_minimal_valid_input() -> None:
     assert task.agent == "claude"
     assert task.verify is None
     assert task.review == "off"
+    assert task.merge_strategy == "manual"
     assert task.created == created
     assert task.body == ""
 
@@ -39,6 +42,14 @@ def test_task_parallel_ok_defaults_to_true() -> None:
     task = Task.model_validate({"id": "parallel-default", "created": created})
 
     assert task.parallel_ok is True
+
+
+def test_task_merge_strategy_defaults_to_manual() -> None:
+    created = datetime(2026, 5, 23, 14, 22, tzinfo=UTC)
+
+    task = Task.model_validate({"id": "merge-default", "created": created})
+
+    assert task.merge_strategy == "manual"
 
 
 def test_task_rejects_invalid_status() -> None:

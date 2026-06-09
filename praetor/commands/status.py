@@ -15,6 +15,8 @@ STATUS_STYLES = {
     "pending": "yellow",
     "ready": "cyan",
     "running": "blue",
+    "pending_merge": "cyan",
+    "merge_failed": "orange3",
     "done": "green",
     "failed": "red",
     "blocked": "magenta",

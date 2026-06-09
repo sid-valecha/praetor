@@ -10,6 +10,7 @@ import subprocess
 from pathlib import Path
 
 from praetor.dag import compute_ready_set, propagate_blocked
+from praetor.merge import MergeResult, merge_task
 from praetor.models import AgentAdapter, Task, TaskResult, TaskStatus
 from praetor.pool import WorkerPool
 from praetor.state import list_tasks, update_task_status
@@ -89,11 +90,15 @@ def drain_queue(
     adapter: AgentAdapter,
     max_parallel: int = 1,
     base_branch: str = "main",
+    merge_strategy: str | None = None,
 ) -> None:
     _raise_on_stale_running(list_tasks(repo_root))
 
     if not isinstance(max_parallel, int) or isinstance(max_parallel, bool) or max_parallel < 1:
         msg = "max_parallel must be >= 1"
+        raise ValueError(msg)
+    if merge_strategy not in {None, "auto", "manual"}:
+        msg = "merge_strategy must be one of: auto, manual"
         raise ValueError(msg)
 
     if max_parallel == 1:
@@ -101,7 +106,7 @@ def drain_queue(
             pass
         return
 
-    _drain_parallel(repo_root, adapter, max_parallel, base_branch)
+    _drain_parallel(repo_root, adapter, max_parallel, base_branch, merge_strategy)
 
 
 def _drain_parallel(
@@ -109,6 +114,7 @@ def _drain_parallel(
     adapter: AgentAdapter,
     max_parallel: int,
     base_branch: str,
+    merge_strategy: str | None,
 ) -> None:
     in_flight: dict[Future[TaskResult], RunningTask] = {}
 
@@ -129,7 +135,7 @@ def _drain_parallel(
             completed_futures, _ = wait(in_flight, return_when=FIRST_COMPLETED)
             for future in completed_futures:
                 running_task = in_flight.pop(future)
-                _complete_parallel_task(repo_root, future, running_task)
+                _complete_parallel_task(repo_root, future, running_task, merge_strategy)
 
 
 def _submit_ready_tasks(
@@ -192,6 +198,7 @@ def _complete_parallel_task(
     repo_root: Path,
     future: Future[TaskResult],
     running_task: RunningTask,
+    run_merge_strategy_override: str | None,
 ) -> None:
     task = running_task.task
     try:
@@ -207,25 +214,36 @@ def _complete_parallel_task(
         _mark_failed_and_propagate(repo_root, task.id)
         return
 
-    if task.verify is None:
-        update_task_status(repo_root, task.id, TaskStatus.done)
-        return
+    if task.verify is not None:
+        verify_result = subprocess.run(
+            task.verify,
+            shell=True,
+            cwd=running_task.worktree.path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        _append_task_log(repo_root, task.id, f"{verify_result.stdout}{verify_result.stderr}")
 
-    verify_result = subprocess.run(
-        task.verify,
-        shell=True,
-        cwd=running_task.worktree.path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    _append_task_log(repo_root, task.id, f"{verify_result.stdout}{verify_result.stderr}")
+        if verify_result.returncode != 0:
+            _mark_failed_and_propagate(repo_root, task.id)
+            return
 
-    if verify_result.returncode != 0:
+    if not _commit_worktree_changes(repo_root, task.id, running_task.worktree.path):
         _mark_failed_and_propagate(repo_root, task.id)
         return
 
-    update_task_status(repo_root, task.id, TaskStatus.done)
+    strategy = run_merge_strategy_override or task.merge_strategy
+    if strategy == "manual":
+        update_task_status(repo_root, task.id, TaskStatus.pending_merge)
+        return
+
+    merge_result = merge_task(
+        task.id,
+        repo_root,
+        base_branch=running_task.worktree.base_branch,
+    )
+    _handle_merge_result(repo_root, merge_result)
 
 
 def _raise_on_stale_running(tasks: list[Task]) -> None:
@@ -252,6 +270,60 @@ def _append_task_log(repo_root: Path, task_id: str, content: str) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a") as log_file:
         log_file.write(content)
+
+
+def _commit_worktree_changes(repo_root: Path, task_id: str, worktree_path: Path) -> bool:
+    add_result = _run_git(["add", "-A"], worktree_path)
+    _append_task_log(repo_root, task_id, f"{add_result.stdout}{add_result.stderr}")
+    if add_result.returncode != 0:
+        return False
+
+    commit_result = _run_git(
+        [
+            "-c",
+            "user.name=Praetor",
+            "-c",
+            "user.email=praetor@local",
+            "commit",
+            "--allow-empty",
+            "-m",
+            f"praetor: task {task_id}",
+        ],
+        worktree_path,
+    )
+    _append_task_log(repo_root, task_id, f"{commit_result.stdout}{commit_result.stderr}")
+    return commit_result.returncode == 0
+
+
+def _handle_merge_result(repo_root: Path, merge_result: MergeResult) -> None:
+    if merge_result.success:
+        update_task_status(repo_root, merge_result.task_id, TaskStatus.done)
+        return
+
+    log_content = f"{merge_result.message}\n"
+    if merge_result.conflict_files:
+        log_content += "Conflict files:\n"
+        log_content += "".join(f"- {path}\n" for path in merge_result.conflict_files)
+    _append_task_log(repo_root, merge_result.task_id, log_content)
+    update_task_status(repo_root, merge_result.task_id, TaskStatus.merge_failed)
+
+
+def _run_git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        return subprocess.CompletedProcess(
+            args=["git", *args],
+            returncode=1,
+            stdout="",
+            stderr=f"Git command failed to start: {exc}",
+        )
 
 
 def _mark_failed_and_propagate(repo_root: Path, task_id: str) -> None:

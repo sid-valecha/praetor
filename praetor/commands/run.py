@@ -28,11 +28,20 @@ def run_command(
             help="Base branch to fork worktrees from in parallel mode (default 'main').",
         ),
     ] = "main",
+    merge_strategy: Annotated[
+        str | None,
+        typer.Option(
+            "--merge-strategy",
+            help="Override merge strategy for all tasks this run: auto or manual.",
+        ),
+    ] = None,
 ) -> None:
     repo_root = Path.cwd()
     require_workspace(repo_root)
     if max_parallel < 1:
         raise_usage_error("--max-parallel must be >= 1")
+    if merge_strategy not in {None, "auto", "manual"}:
+        raise_usage_error("--merge-strategy must be one of: auto, manual")
 
     try:
         agent_adapter = get_adapter(adapter)
@@ -45,6 +54,7 @@ def run_command(
             agent_adapter,
             max_parallel=max_parallel,
             base_branch=base_branch,
+            merge_strategy=merge_strategy,
         )
     except Exception as exc:
         raise ClickException(str(exc)) from exc
