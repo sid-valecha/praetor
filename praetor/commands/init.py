@@ -9,5 +9,7 @@ console = Console()
 
 def init_command() -> None:
     repo_root = Path.cwd()
-    init_workspace(repo_root)
+    notes = init_workspace(repo_root)
     console.print(f"Initialized .praetor/ in {repo_root}")
+    for note in notes:
+        console.print(f"[yellow]Note:[/yellow] {note}")

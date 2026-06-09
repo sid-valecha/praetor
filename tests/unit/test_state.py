@@ -78,6 +78,20 @@ def test_init_workspace_recognizes_unslashed_praetor_gitignore_entry(tmp_path: P
     assert text.count(".praetor") == 1
 
 
+def test_init_workspace_returns_gitignore_note_when_modified(tmp_path: Path) -> None:
+    notes = init_workspace(tmp_path)
+
+    assert any(".gitignore" in note and "Commit" in note for note in notes)
+
+
+def test_init_workspace_returns_no_note_when_gitignore_already_correct(tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text(".praetor/\n")
+
+    notes = init_workspace(tmp_path)
+
+    assert notes == []
+
+
 def test_init_workspace_seeds_context_from_claude_md(tmp_path: Path) -> None:
     context = "# Repo Context\n\nUse this for task context.\n"
     (tmp_path / "CLAUDE.md").write_text(context)
