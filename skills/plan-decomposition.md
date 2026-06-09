@@ -55,7 +55,17 @@ Keep `parallel_ok: false` when:
 - the task performs migrations, broad refactors, or cross-cutting formatting
 - the verify command mutates shared state or requires exclusive resources
 
-In v0, Praetor runs sequentially even when `parallel_ok: true`; the field still belongs in every task for v1 compatibility.
+Praetor runs sequentially by default. When the user runs with `--max-parallel > 1`, ready tasks with `parallel_ok: true` may run concurrently in worktrees; `parallel_ok: false` tasks run alone.
+
+## Merge Strategy
+
+For most decomposition outputs, leave the default `merge_strategy: manual` so the user reviews each task before integration.
+
+Suggest `merge_strategy: auto` only when all of these are true:
+- the task has a verify command
+- the task scope is genuinely isolated, such as a single file or single module
+- the task is unlikely to overlap with sibling tasks
+- the user has explicitly indicated comfort with auto-merging
 
 ## Writing the DAG
 
@@ -120,6 +130,7 @@ depends_on: []
 parallel_ok: false
 agent: claude
 verify: pytest tests/unit/test_models.py tests/unit/test_frontmatter.py
+merge_strategy: manual
 created: 2026-06-07T19:00:00Z
 review: off
 ---
@@ -147,6 +158,7 @@ depends_on: [001-add-retry-schema]
 parallel_ok: true
 agent: claude
 verify: pytest tests/unit/test_status_command.py
+merge_strategy: manual
 created: 2026-06-07T19:05:00Z
 review: off
 ---
@@ -174,6 +186,7 @@ depends_on: [001-add-retry-schema]
 parallel_ok: false
 agent: claude
 verify: pytest tests/unit/test_runner.py
+merge_strategy: manual
 created: 2026-06-07T19:10:00Z
 review: strict
 ---
@@ -201,6 +214,7 @@ depends_on: [002-render-retry-status, 003-runner-retries-failed-tasks]
 parallel_ok: false
 agent: claude
 verify: pytest tests/e2e/test_retry_policy.py
+merge_strategy: manual
 created: 2026-06-07T19:15:00Z
 review: strict
 ---

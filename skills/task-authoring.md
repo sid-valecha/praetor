@@ -33,18 +33,20 @@ The `<id>` in the filename must match the `id` frontmatter field. Use stable, re
 
 ## Frontmatter Schema
 
-Every task file must include all fields from the v0 and planned v1 schema from day one, even when v0 does not honor every field yet.
+Every task file must include the current Praetor task schema so queued work can run in sequential or parallel mode without later migration.
 
 | Field | Type | Default | Version | Notes |
 | --- | --- | --- | --- | --- |
 | `id` | string | none, required | v0 | Must match `.praetor/tasks/<id>.md`. |
-| `status` | enum string | `pending` | v0 | Use `pending`, `running`, `done`, `failed`, or `blocked`. Do not persist `ready` in v0; readiness is derived. |
+| `status` | enum string | `pending` | v0 | Use `pending`, `running`, `pending_merge`, `merge_failed`, `done`, `failed`, or `blocked`. Do not persist `ready`; readiness is derived. |
 | `depends_on` | list of task ids | `[]` | v0 | List every prerequisite task id. Empty list means no prerequisites. |
-| `parallel_ok` | boolean | `true` | v1+ honored | Include now. Set `false` for unsafe or cross-cutting sibling work. |
-| `agent` | string | `claude` | v1.3+ honored | Include now. Expected values are `claude`, `codex`, or `aider`; v0 effectively uses Claude. |
+| `parallel_ok` | boolean | `true` | v1 honored | Set `false` for unsafe or cross-cutting sibling work. |
+| `agent` | string | `claude` | v0 | Expected values are currently adapter names such as `claude`, `codex`, or `aider`; `praetor run --adapter` selects the runtime adapter. |
 | `verify` | string or null | `null` | v0 | Prefer a real command. It is run by the shell after the agent finishes. |
+| `review` | enum string | `off` | v1.2+ honored | Use `off`, `lenient`, or `strict`. |
+| `merge_strategy` | enum string | `manual` | v1 honored | Use `manual` or `auto`. `manual` stops after verify and parks the task as `pending_merge` for `praetor merge`; `auto` merges automatically after verify passes. |
 | `created` | UTC datetime string | none, required | v0 | Use ISO 8601 with `Z`, for example `2026-06-07T18:30:00Z`. |
-| `review` | enum string | `off` | v1.2+ honored | Include now. Use `off`, `lenient`, or `strict`. |
+| `body` | markdown body | empty string | v0 | The content after frontmatter. It is parsed into the task model and passed to the agent; do not put it in frontmatter. |
 
 ## Required Sections
 
@@ -83,6 +85,10 @@ Bad patterns:
 
 If no automated verification exists yet, the task should usually include creating a focused test and then set `verify` to that test command.
 
+## Merge Strategy
+
+Use the default `merge_strategy: manual` for most tasks so the user reviews verified work before integration. Set `merge_strategy: auto` only for tasks whose verify command is strong enough that you would merge a passing PR without further review.
+
 ## Using `praetor add`
 
 Use `praetor add` when creating a simple task interactively because it writes a valid task file with an id, timestamp, dependencies, and verify command:
@@ -91,12 +97,12 @@ Use `praetor add` when creating a simple task interactively because it writes a 
 praetor add --title "Add webhook signature tests" --depends-on "001-add-webhook-parser" --verify "pytest tests/billing/test_webhook_signature.py"
 ```
 
-After `praetor add`, open the created file and fill in `## What to do`, `## How to verify`, and `## Proof when complete`. Also check the v1+ fields (`parallel_ok`, `review`, `agent`) and adjust them if needed.
+After `praetor add`, open the created file and fill in `## What to do`, `## How to verify`, and `## Proof when complete`. Also check `parallel_ok`, `merge_strategy`, `review`, and `agent`, then adjust them if needed.
 
 Edit files directly when:
 - writing several tasks from a decomposition
 - preserving manually chosen numeric ids
-- setting fields the v0 CLI does not expose yet
+- setting fields or hand-picked ids more precisely than the CLI flags allow
 - copying a reviewed task template
 
 When editing directly, keep the filename, `id`, dependency ids, and verify command consistent.
@@ -113,6 +119,7 @@ depends_on: [001-add-webhook-parser]
 parallel_ok: true
 agent: claude
 verify: pytest tests/billing/test_webhook_signature.py
+merge_strategy: manual
 created: 2026-06-07T18:30:00Z
 review: off
 ---
@@ -146,5 +153,5 @@ Report the passing pytest output and summarize any production files changed. If 
 - Missing `depends_on`: if the task needs code, fixtures, schema, docs, or generated files from another task, list that task id.
 - Body is a spec, not a prompt: convert goals into actionable instructions with files, constraints, and expected proof.
 - Persisting `status: ready`: keep `status: pending`; Praetor derives readiness from done dependencies.
-- Omitting v1+ fields: include `parallel_ok`, `agent`, and `review` even while v0 ignores parts of them.
+- Omitting schema fields: include `parallel_ok`, `agent`, `merge_strategy`, and `review` even when their default values are acceptable.
 - Oversized tasks: split work if the verify command cannot prove completion for one agent session.

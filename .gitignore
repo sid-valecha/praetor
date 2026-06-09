@@ -1,8 +1,8 @@
-# Local planning docs (not committed)
+# Local planning docs (not committed — PM-internal session state)
 plan.md
-roadmap.md
 Handoff.md
 design-notes.md
+# roadmap.md is committed as the public design spec (see README.md "Roadmap" section)
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
