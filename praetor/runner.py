@@ -1,9 +1,29 @@
+"""Task runner orchestration.
+
+Only the main runner thread writes task markdown. Worker threads may execute
+adapters, but they return TaskResult objects for the main thread to apply.
+"""
+
+from concurrent.futures import FIRST_COMPLETED, Future, wait
+from dataclasses import dataclass
 import subprocess
 from pathlib import Path
 
 from praetor.dag import compute_ready_set, propagate_blocked
-from praetor.models import AgentAdapter, Task, TaskStatus
+from praetor.models import AgentAdapter, Task, TaskResult, TaskStatus
+from praetor.pool import WorkerPool
 from praetor.state import list_tasks, update_task_status
+from praetor.worktree import Worktree, WorktreeError, create_worktree
+
+
+class StaleRunningError(RuntimeError):
+    """Raised when a previous run left tasks in running state."""
+
+
+@dataclass(frozen=True)
+class RunningTask:
+    task: Task
+    worktree: Worktree
 
 
 def render_task_prompt(task: Task, context: str = "") -> str:
@@ -64,9 +84,174 @@ def run_once(repo_root: Path, adapter: AgentAdapter) -> bool:
     return True
 
 
-def drain_queue(repo_root: Path, adapter: AgentAdapter) -> None:
-    while run_once(repo_root, adapter):
-        pass
+def drain_queue(
+    repo_root: Path,
+    adapter: AgentAdapter,
+    max_parallel: int = 1,
+    base_branch: str = "main",
+) -> None:
+    _raise_on_stale_running(list_tasks(repo_root))
+
+    if not isinstance(max_parallel, int) or isinstance(max_parallel, bool) or max_parallel < 1:
+        msg = "max_parallel must be >= 1"
+        raise ValueError(msg)
+
+    if max_parallel == 1:
+        while run_once(repo_root, adapter):
+            pass
+        return
+
+    _drain_parallel(repo_root, adapter, max_parallel, base_branch)
+
+
+def _drain_parallel(
+    repo_root: Path,
+    adapter: AgentAdapter,
+    max_parallel: int,
+    base_branch: str,
+) -> None:
+    in_flight: dict[Future[TaskResult], RunningTask] = {}
+
+    with WorkerPool(max_parallel) as pool:
+        while True:
+            made_progress = _submit_ready_tasks(
+                repo_root,
+                adapter,
+                pool,
+                in_flight,
+                base_branch,
+            )
+            if not in_flight:
+                if not made_progress:
+                    return
+                continue
+
+            completed_futures, _ = wait(in_flight, return_when=FIRST_COMPLETED)
+            for future in completed_futures:
+                running_task = in_flight.pop(future)
+                _complete_parallel_task(repo_root, future, running_task)
+
+
+def _submit_ready_tasks(
+    repo_root: Path,
+    adapter: AgentAdapter,
+    pool: WorkerPool,
+    in_flight: dict[Future[TaskResult], RunningTask],
+    base_branch: str,
+) -> bool:
+    capacity = pool.max_parallel - len(in_flight)
+    if capacity <= 0:
+        return False
+
+    ready_tasks = compute_ready_set(list_tasks(repo_root))
+    if not ready_tasks:
+        return False
+
+    solo_tasks = [task for task in ready_tasks if not task.parallel_ok]
+    if solo_tasks:
+        if in_flight:
+            return False
+        return _submit_parallel_task(
+            repo_root, adapter, pool, in_flight, solo_tasks[0], base_branch
+        )
+
+    submitted = False
+    for task in ready_tasks[:capacity]:
+        submitted = (
+            _submit_parallel_task(repo_root, adapter, pool, in_flight, task, base_branch)
+            or submitted
+        )
+    return submitted
+
+
+def _submit_parallel_task(
+    repo_root: Path,
+    adapter: AgentAdapter,
+    pool: WorkerPool,
+    in_flight: dict[Future[TaskResult], RunningTask],
+    task: Task,
+    base_branch: str,
+) -> bool:
+    try:
+        worktree = create_worktree(task.id, repo_root, base_branch=base_branch)
+    except WorktreeError as exc:
+        _write_task_log(repo_root, task.id, f"Worktree collision for {task.id}: {exc}\n")
+        _mark_failed_and_propagate(repo_root, task.id)
+        return True
+
+    update_task_status(repo_root, task.id, TaskStatus.running)
+    context_path = repo_root / ".praetor" / "context.md"
+    context = context_path.read_text() if context_path.exists() else ""
+    prompt = render_task_prompt(task, context)
+    future = pool.submit(adapter, prompt, worktree.path)
+    in_flight[future] = RunningTask(task=task, worktree=worktree)
+    return True
+
+
+def _complete_parallel_task(
+    repo_root: Path,
+    future: Future[TaskResult],
+    running_task: RunningTask,
+) -> None:
+    task = running_task.task
+    try:
+        result = future.result()
+    except Exception as exc:  # noqa: BLE001
+        _write_task_log(repo_root, task.id, f"Adapter failed for {task.id}: {exc}\n")
+        _mark_failed_and_propagate(repo_root, task.id)
+        return
+
+    _write_task_log(repo_root, task.id, f"{result.stdout}{result.stderr}")
+
+    if result.exit_code != 0:
+        _mark_failed_and_propagate(repo_root, task.id)
+        return
+
+    if task.verify is None:
+        update_task_status(repo_root, task.id, TaskStatus.done)
+        return
+
+    verify_result = subprocess.run(
+        task.verify,
+        shell=True,
+        cwd=running_task.worktree.path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    _append_task_log(repo_root, task.id, f"{verify_result.stdout}{verify_result.stderr}")
+
+    if verify_result.returncode != 0:
+        _mark_failed_and_propagate(repo_root, task.id)
+        return
+
+    update_task_status(repo_root, task.id, TaskStatus.done)
+
+
+def _raise_on_stale_running(tasks: list[Task]) -> None:
+    stale_task_ids = [task.id for task in tasks if task.status is TaskStatus.running]
+    if not stale_task_ids:
+        return
+
+    joined_task_ids = ", ".join(stale_task_ids)
+    msg = (
+        f"Stale running task(s) detected: {joined_task_ids}. "
+        "Inspect those tasks' worktrees and logs before retrying."
+    )
+    raise StaleRunningError(msg)
+
+
+def _write_task_log(repo_root: Path, task_id: str, content: str) -> None:
+    log_path = repo_root / ".praetor" / "logs" / f"{task_id}.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(content)
+
+
+def _append_task_log(repo_root: Path, task_id: str, content: str) -> None:
+    log_path = repo_root / ".praetor" / "logs" / f"{task_id}.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("a") as log_file:
+        log_file.write(content)
 
 
 def _mark_failed_and_propagate(repo_root: Path, task_id: str) -> None:

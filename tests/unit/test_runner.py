@@ -6,7 +6,7 @@ import pytest
 from praetor.adapters import MockAdapter
 from praetor.frontmatter import dump_task
 from praetor.models import Task, TaskResult, TaskStatus
-from praetor.runner import run_once
+from praetor.runner import StaleRunningError, drain_queue, run_once
 from praetor.state import get_task, init_workspace
 
 
@@ -29,3 +29,17 @@ def test_runner_marks_failed_on_adapter_exception(tmp_path: Path) -> None:
         run_once(tmp_path, RaisingMockAdapter())
 
     assert get_task(tmp_path, "task-a").status is TaskStatus.failed
+
+
+def test_drain_queue_raises_on_stale_running(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+    task = Task(
+        id="task-a",
+        status=TaskStatus.running,
+        created=datetime(2026, 6, 7, 12, 0, tzinfo=UTC),
+        body="# task-a\n",
+    )
+    dump_task(task, tmp_path / ".praetor" / "tasks" / "task-a.md")
+
+    with pytest.raises(StaleRunningError, match="task-a"):
+        drain_queue(tmp_path, MockAdapter())

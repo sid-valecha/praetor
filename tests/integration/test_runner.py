@@ -65,6 +65,17 @@ def test_drain_queue_linear_three_tasks(tmp_path: Path) -> None:
     assert get_task(tmp_path, "C").status is TaskStatus.done
 
 
+def test_drain_queue_max_parallel_one_does_not_create_worktrees(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+    write_task(tmp_path, make_task("A"))
+
+    drain_queue(tmp_path, MockAdapter(exit_code=0), max_parallel=1)
+
+    worktrees_dir = tmp_path / ".praetor" / "worktrees"
+    assert not worktrees_dir.exists() or list(worktrees_dir.iterdir()) == []
+    assert get_task(tmp_path, "A").status is TaskStatus.done
+
+
 def test_task_failure_marks_failed_and_propagates_blocked(tmp_path: Path) -> None:
     init_workspace(tmp_path)
     write_task(tmp_path, make_task("A", offset=0))

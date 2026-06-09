@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import subprocess
 
@@ -12,10 +13,17 @@ class Worktree(BaseModel):
     task_id: str
     path: Path
     branch: str
-    base_ref: str
+    # The branch name to merge back into (e.g., "main").
+    base_branch: str
+    base_sha: str
 
 
-def create_worktree(task_id: str, repo_root: Path, base_ref: str = "HEAD") -> Worktree:
+def create_worktree(
+    task_id: str,
+    repo_root: Path,
+    base_branch: str = "main",
+    base_ref: str = "HEAD",
+) -> Worktree:
     repo_root = repo_root.resolve()
     worktrees_dir = _worktrees_dir(repo_root)
     worktree_path = worktrees_dir / task_id
@@ -32,8 +40,26 @@ def create_worktree(task_id: str, repo_root: Path, base_ref: str = "HEAD") -> Wo
 
     worktrees_dir.mkdir(parents=True, exist_ok=True)
     _run_git(["worktree", "add", "-b", branch, str(worktree_path), full_sha], repo_root)
+    _ignore_metadata_sidecar(worktree_path)
+    _metadata_path(worktree_path).write_text(
+        json.dumps(
+            {
+                "task_id": task_id,
+                "branch": branch,
+                "base_branch": base_branch,
+                "base_sha": full_sha,
+            },
+            indent=2,
+        )
+    )
 
-    return Worktree(task_id=task_id, path=worktree_path, branch=branch, base_ref=full_sha)
+    return Worktree(
+        task_id=task_id,
+        path=worktree_path,
+        branch=branch,
+        base_branch=base_branch,
+        base_sha=full_sha,
+    )
 
 
 def list_worktrees(repo_root: Path) -> list[Worktree]:
@@ -44,25 +70,25 @@ def list_worktrees(repo_root: Path) -> list[Worktree]:
 
     for entry in _parse_porcelain(output):
         path_text = entry.get("worktree")
-        head = entry.get("HEAD")
-        branch_ref = entry.get("branch")
-        if path_text is None or head is None or branch_ref is None:
+        if path_text is None:
             continue
 
         path = Path(path_text).resolve()
         if not _is_under(path, worktrees_dir):
             continue
 
-        prefix = "refs/heads/"
-        if not branch_ref.startswith(prefix):
+        metadata_path = _metadata_path(path)
+        if not metadata_path.exists():
             continue
+        metadata = json.loads(metadata_path.read_text())
 
         worktrees.append(
             Worktree(
-                task_id=path.name,
+                task_id=metadata["task_id"],
                 path=path,
-                branch=branch_ref.removeprefix(prefix),
-                base_ref=head,
+                branch=metadata["branch"],
+                base_branch=metadata["base_branch"],
+                base_sha=metadata["base_sha"],
             )
         )
 
@@ -114,6 +140,26 @@ def _run_git(args: list[str], cwd: Path) -> str:
 
 def _worktrees_dir(repo_root: Path) -> Path:
     return repo_root / ".praetor" / "worktrees"
+
+
+def _metadata_path(worktree_path: Path) -> Path:
+    return worktree_path / ".praetor-meta.json"
+
+
+def _ignore_metadata_sidecar(worktree_path: Path) -> None:
+    exclude_text = _run_git(["rev-parse", "--git-path", "info/exclude"], worktree_path)
+    exclude_path = Path(exclude_text)
+    if not exclude_path.is_absolute():
+        exclude_path = worktree_path / exclude_path
+
+    exclude_path.parent.mkdir(parents=True, exist_ok=True)
+    existing = exclude_path.read_text() if exclude_path.exists() else ""
+    if ".praetor-meta.json" in existing.splitlines():
+        return
+    with exclude_path.open("a") as exclude_file:
+        if existing and not existing.endswith("\n"):
+            exclude_file.write("\n")
+        exclude_file.write(".praetor-meta.json\n")
 
 
 def _branch_name(task_id: str) -> str:
