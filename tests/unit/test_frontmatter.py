@@ -142,6 +142,83 @@ def test_merge_strategy_round_trips(tmp_path: Path) -> None:
     assert parse_task(path).merge_strategy == "auto"
 
 
+def test_forward_compat_task_fields_parse_from_frontmatter(tmp_path: Path) -> None:
+    path = tmp_path / "forward-compat.md"
+    path.write_text(
+        """---
+id: forward-compat
+status: pending
+retry: 3
+priority: high
+env: {FOO: bar, BAZ: qux}
+context_files: [a.py, b.py]
+created: 2026-05-23T14:22:00Z
+---
+
+# Forward compat
+"""
+    )
+
+    task = parse_task(path)
+
+    assert task.retry == 3
+    assert task.priority == "high"
+    assert task.env == {"FOO": "bar", "BAZ": "qux"}
+    assert task.context_files == ["a.py", "b.py"]
+
+
+def test_forward_compat_task_fields_dump_and_reparse(tmp_path: Path) -> None:
+    path = tmp_path / "forward-compat-dump.md"
+    task = Task.model_validate(
+        {
+            "id": "forward-compat-dump",
+            "retry": 3,
+            "priority": "high",
+            "env": {"FOO": "bar", "BAZ": "qux"},
+            "context_files": ["a.py", "b.py"],
+            "created": "2026-05-23T14:22:00Z",
+            "body": "# Forward compat dump",
+        }
+    )
+
+    dump_task(task, path)
+
+    assert parse_task(path) == task
+
+
+def test_cancelled_status_parses_from_frontmatter(tmp_path: Path) -> None:
+    path = tmp_path / "cancelled.md"
+    path.write_text(
+        """---
+id: cancelled
+status: cancelled
+created: 2026-05-23T14:22:00Z
+---
+
+# Cancelled task
+"""
+    )
+
+    assert parse_task(path).status is TaskStatus.cancelled
+
+
+def test_retry_frontmatter_field_is_not_dropped_on_round_trip(tmp_path: Path) -> None:
+    path = tmp_path / "retry.md"
+    task = Task.model_validate(
+        {
+            "id": "retry",
+            "retry": 5,
+            "created": "2026-05-23T14:22:00Z",
+            "body": "# Retry\n",
+        }
+    )
+
+    dump_task(task, path)
+
+    assert "retry: 5" in path.read_text()
+    assert parse_task(path).retry == 5
+
+
 def test_invalid_frontmatter_status_raises_validation_error(tmp_path: Path) -> None:
     path = tmp_path / "bad-status.md"
     path.write_text(

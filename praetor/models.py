@@ -11,6 +11,7 @@ class TaskStatus(StrEnum):
     running = "running"
     pending_merge = "pending_merge"
     merge_failed = "merge_failed"
+    cancelled = "cancelled"
     done = "done"
     failed = "failed"
     blocked = "blocked"
@@ -27,6 +28,10 @@ class Task(BaseModel):
     verify: str | None = None
     review: str = "off"
     merge_strategy: Literal["auto", "manual"] = "manual"
+    retry: int = 0
+    priority: Literal["low", "normal", "high"] = "normal"
+    env: dict[str, str] = Field(default_factory=dict)
+    context_files: list[str] = Field(default_factory=list)
     created: datetime
     body: str = ""
 
@@ -57,6 +62,8 @@ class TaskResult(BaseModel):
     stderr: str
     duration_ms: int
     diff: str | None = None
+    tokens_used: int | None = None
+    cost_usd: float | None = None
 
 
 class AgentAdapter(Protocol):

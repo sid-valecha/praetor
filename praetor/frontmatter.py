@@ -13,6 +13,10 @@ FRONTMATTER_FIELDS = (
     "verify",
     "review",
     "merge_strategy",
+    "retry",
+    "priority",
+    "env",
+    "context_files",
     "created",
 )
 

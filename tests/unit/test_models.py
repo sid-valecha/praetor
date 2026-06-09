@@ -12,10 +12,12 @@ def test_task_status_values() -> None:
         "running",
         "pending_merge",
         "merge_failed",
+        "cancelled",
         "done",
         "failed",
         "blocked",
     ]
+    assert TaskStatus.cancelled.value == "cancelled"
 
 
 def test_task_accepts_minimal_valid_input() -> None:
@@ -31,6 +33,10 @@ def test_task_accepts_minimal_valid_input() -> None:
     assert task.verify is None
     assert task.review == "off"
     assert task.merge_strategy == "manual"
+    assert task.retry == 0
+    assert task.priority == "normal"
+    assert task.env == {}
+    assert task.context_files == []
     assert task.created == created
     assert task.body == ""
 
@@ -49,6 +55,49 @@ def test_task_merge_strategy_defaults_to_manual() -> None:
     task = Task.model_validate({"id": "merge-default", "created": created})
 
     assert task.merge_strategy == "manual"
+
+
+def test_task_accepts_forward_compat_runtime_fields() -> None:
+    created = datetime(2026, 5, 23, 14, 22, tzinfo=UTC)
+    task = Task(
+        id="forward-compat-fields",
+        created=created,
+        retry=3,
+        priority="high",
+        env={"FOO": "bar"},
+        context_files=["a.py"],
+    )
+
+    dumped = task.model_dump()
+
+    assert dumped["retry"] == 3
+    assert dumped["priority"] == "high"
+    assert dumped["env"] == {"FOO": "bar"}
+    assert dumped["context_files"] == ["a.py"]
+    assert Task.model_validate(dumped) == task
+
+
+def test_task_rejects_invalid_priority() -> None:
+    with pytest.raises(ValidationError):
+        Task(
+            id="invalid-priority",
+            created=datetime(2026, 5, 23, 14, 22, tzinfo=UTC),
+            priority="invalid",
+        )
+
+
+def test_task_mutable_defaults_are_not_shared() -> None:
+    created = datetime(2026, 5, 23, 14, 22, tzinfo=UTC)
+    first = Task(id="first", created=created)
+    second = Task(id="second", created=created)
+
+    first.env["FOO"] = "bar"
+    first.context_files.append("a.py")
+
+    assert second.env == {}
+    assert second.context_files == []
+    assert first.env is not second.env
+    assert first.context_files is not second.context_files
 
 
 def test_task_rejects_invalid_status() -> None:
@@ -71,4 +120,6 @@ def test_task_result_round_trips_through_model_dump() -> None:
         diff="diff --git a/file b/file",
     )
 
+    assert result.tokens_used is None
+    assert result.cost_usd is None
     assert TaskResult.model_validate(result.model_dump()) == result
