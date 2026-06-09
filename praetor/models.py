@@ -21,7 +21,7 @@ class Task(BaseModel):
     id: str
     status: TaskStatus = TaskStatus.pending
     depends_on: list[str] = Field(default_factory=list)
-    parallel_ok: bool = False
+    parallel_ok: bool = True
     agent: str = "claude"
     verify: str | None = None
     review: str = "off"

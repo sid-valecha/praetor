@@ -24,6 +24,13 @@ def add_command(
         str | None,
         typer.Option("--verify", help="Verify shell command."),
     ] = None,
+    parallel_ok: Annotated[
+        bool,
+        typer.Option(
+            "--parallel-ok/--no-parallel-ok",
+            help="Whether this task may run concurrently with ready sibling tasks.",
+        ),
+    ] = True,
     agent: Annotated[str, typer.Option("--agent", help="Agent adapter name.")] = "claude",
 ) -> None:
     repo_root = Path.cwd()
@@ -37,6 +44,7 @@ def add_command(
         id=task_id,
         status=TaskStatus.pending,
         depends_on=dependencies,
+        parallel_ok=parallel_ok,
         agent=agent,
         verify=verify,
         created=datetime.now(UTC),

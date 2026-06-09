@@ -76,6 +76,34 @@ def test_dumped_task_is_byte_identical_after_round_trip(tmp_path: Path) -> None:
     assert path.read_bytes() == first_dump
 
 
+@pytest.mark.parametrize(
+    ("parallel_ok", "expected_line"),
+    [(True, "parallel_ok: true"), (False, "parallel_ok: false")],
+)
+def test_parallel_ok_round_trips_and_serializes_as_yaml_bool(
+    tmp_path: Path, parallel_ok: bool, expected_line: str
+) -> None:
+    path = tmp_path / "parallel-ok.md"
+    task = Task.model_validate(
+        {
+            "id": "parallel-ok",
+            "status": "pending",
+            "depends_on": [],
+            "parallel_ok": parallel_ok,
+            "agent": "claude",
+            "verify": None,
+            "review": "off",
+            "created": "2026-05-23T14:22:00Z",
+            "body": "# Parallel flag\n",
+        }
+    )
+
+    dump_task(task, path)
+
+    assert expected_line in path.read_text()
+    assert parse_task(path).parallel_ok is parallel_ok
+
+
 def test_invalid_frontmatter_status_raises_validation_error(tmp_path: Path) -> None:
     path = tmp_path / "bad-status.md"
     path.write_text(

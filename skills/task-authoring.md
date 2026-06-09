@@ -40,7 +40,7 @@ Every task file must include all fields from the v0 and planned v1 schema from d
 | `id` | string | none, required | v0 | Must match `.praetor/tasks/<id>.md`. |
 | `status` | enum string | `pending` | v0 | Use `pending`, `running`, `done`, `failed`, or `blocked`. Do not persist `ready` in v0; readiness is derived. |
 | `depends_on` | list of task ids | `[]` | v0 | List every prerequisite task id. Empty list means no prerequisites. |
-| `parallel_ok` | boolean | `false` | v1+ honored | Include now. Set `true` only when safe to run beside sibling tasks. |
+| `parallel_ok` | boolean | `true` | v1+ honored | Include now. Set `false` for unsafe or cross-cutting sibling work. |
 | `agent` | string | `claude` | v1.3+ honored | Include now. Expected values are `claude`, `codex`, or `aider`; v0 effectively uses Claude. |
 | `verify` | string or null | `null` | v0 | Prefer a real command. It is run by the shell after the agent finishes. |
 | `created` | UTC datetime string | none, required | v0 | Use ISO 8601 with `Z`, for example `2026-06-07T18:30:00Z`. |

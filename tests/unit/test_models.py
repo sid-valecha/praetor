@@ -25,12 +25,20 @@ def test_task_accepts_minimal_valid_input() -> None:
     assert task.id == "001-core-schema"
     assert task.status is TaskStatus.pending
     assert task.depends_on == []
-    assert task.parallel_ok is False
+    assert task.parallel_ok is True
     assert task.agent == "claude"
     assert task.verify is None
     assert task.review == "off"
     assert task.created == created
     assert task.body == ""
+
+
+def test_task_parallel_ok_defaults_to_true() -> None:
+    created = datetime(2026, 5, 23, 14, 22, tzinfo=UTC)
+
+    task = Task.model_validate({"id": "parallel-default", "created": created})
+
+    assert task.parallel_ok is True
 
 
 def test_task_rejects_invalid_status() -> None:
