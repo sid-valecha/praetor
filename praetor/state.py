@@ -38,6 +38,22 @@ def init_workspace(repo_root: Path) -> None:
     if not state_path.exists():
         write_global_state(repo_root, {"version": 1, "last_run": None})
 
+    _ensure_gitignore_excludes_praetor(repo_root)
+
+
+def _ensure_gitignore_excludes_praetor(repo_root: Path) -> None:
+    # Without this, every Praetor run creates untracked files under .praetor/,
+    # which causes the merge service (and the user's own git workflow) to see
+    # the working tree as dirty. Dogfood caught this on first parallel run.
+    gitignore_path = repo_root / ".gitignore"
+    existing = gitignore_path.read_text() if gitignore_path.exists() else ""
+    lines = existing.splitlines()
+    if any(line.strip().rstrip("/") == ".praetor" for line in lines):
+        return
+
+    prefix = existing if existing.endswith("\n") or not existing else existing + "\n"
+    _write_text_atomic(gitignore_path, prefix + ".praetor/\n")
+
 
 def list_tasks(repo_root: Path) -> list[Task]:
     tasks_dir = _tasks_dir(repo_root)

@@ -12,8 +12,14 @@ class ClaudeCodeAdapter:
         start = time.monotonic()
 
         try:
+            # --permission-mode auto: required because `-p` is non-interactive;
+            # any prompt-requiring mode (default, acceptEdits) hangs since real
+            # coding tasks routinely need Bash mid-agent (read repo state, run
+            # tests, install deps). Praetor's trust boundary is the worktree
+            # (parallel mode) or the user's Docker container (untrusted code) —
+            # not per-action prompting.
             completed = subprocess.run(
-                ["claude", "-p", prompt],
+                ["claude", "-p", "--permission-mode", "auto", prompt],
                 cwd=cwd,
                 capture_output=True,
                 text=True,

@@ -41,6 +41,43 @@ def test_init_workspace_idempotent(tmp_path: Path) -> None:
     assert (tmp_path / ".praetor" / "logs").is_dir()
 
 
+def test_init_workspace_creates_gitignore_when_absent(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+
+    gitignore = tmp_path / ".gitignore"
+    assert gitignore.is_file()
+    assert ".praetor/" in gitignore.read_text().splitlines()
+
+
+def test_init_workspace_appends_to_existing_gitignore(tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("node_modules/\n*.log\n")
+
+    init_workspace(tmp_path)
+
+    lines = (tmp_path / ".gitignore").read_text().splitlines()
+    assert "node_modules/" in lines
+    assert "*.log" in lines
+    assert ".praetor/" in lines
+
+
+def test_init_workspace_does_not_duplicate_praetor_gitignore_entry(tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text(".praetor/\n*.log\n")
+
+    init_workspace(tmp_path)
+
+    text = (tmp_path / ".gitignore").read_text()
+    assert text.count(".praetor/") == 1
+
+
+def test_init_workspace_recognizes_unslashed_praetor_gitignore_entry(tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text(".praetor\n")
+
+    init_workspace(tmp_path)
+
+    text = (tmp_path / ".gitignore").read_text()
+    assert text.count(".praetor") == 1
+
+
 def test_init_workspace_seeds_context_from_claude_md(tmp_path: Path) -> None:
     context = "# Repo Context\n\nUse this for task context.\n"
     (tmp_path / "CLAUDE.md").write_text(context)
