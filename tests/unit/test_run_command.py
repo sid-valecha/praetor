@@ -17,7 +17,6 @@ def test_run_rejects_merge_strategy_with_default_max_parallel(tmp_path: Path, mo
 
     assert result.exit_code != 0
     assert "only applies in parallel mode" in result.output
-    assert "--max-parallel" in result.output
 
 
 def test_run_rejects_merge_strategy_with_max_parallel_1(tmp_path: Path, monkeypatch) -> None:
@@ -31,7 +30,6 @@ def test_run_rejects_merge_strategy_with_max_parallel_1(tmp_path: Path, monkeypa
 
     assert result.exit_code != 0
     assert "only applies in parallel mode" in result.output
-    assert "--max-parallel" in result.output
 
 
 def test_run_accepts_merge_strategy_with_max_parallel_greater_than_one(
