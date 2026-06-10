@@ -1,24 +1,36 @@
 # Praetor
 
+[![CI](https://img.shields.io/github/actions/workflow/status/sid-valecha/praetor/ci.yml?branch=main&label=CI)](https://github.com/sid-valecha/praetor/actions/workflows/ci.yml)
+[![PyPI version](https://img.shields.io/pypi/v/praetor-cli)](https://pypi.org/project/praetor-cli/)
+[![Python versions](https://img.shields.io/pypi/pyversions/praetor-cli)](https://pypi.org/project/praetor-cli/)
+[![License: MIT](https://img.shields.io/github/license/sid-valecha/praetor)](LICENSE)
+
 Praetor is a local-first task queue and DAG executor for coding agents; it is not another coding agent.
 
 ## Install
 
 Praetor requires Python 3.11 or newer.
 
-Primary install:
+Primary install (Python / cross-platform):
 
 ```bash
 pipx install praetor-cli
 ```
 
-Alternative install:
+macOS (via Homebrew tap):
+
+```bash
+brew tap sid-valecha/praetor
+brew install praetor
+```
+
+Alternative install (no pipx):
 
 ```bash
 pip install praetor-cli
 ```
 
-The PyPI package is `praetor-cli`; the installed binary is `praetor`.
+The PyPI package is `praetor-cli`; the Homebrew formula is `sid-valecha/praetor/praetor`; the installed binary is `praetor`.
 
 ## Quickstart
 
