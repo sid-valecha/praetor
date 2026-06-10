@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 from praetor.cli import app
 from praetor.frontmatter import dump_task
 from praetor.models import Task, TaskStatus
+from praetor.serialize import task_to_dict
 from praetor.state import init_workspace, update_task_status
 
 runner = CliRunner()
@@ -90,6 +91,18 @@ def test_status_json_serializes_datetime_with_z_suffix(tmp_path: Path, monkeypat
         r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z",
         task["created"],
     )
+
+
+def test_status_json_matches_shared_serializer(tmp_path: Path, monkeypatch) -> None:
+    init_workspace(tmp_path)
+    task = _make_task("task-a", TaskStatus.pending)
+    _write_task(tmp_path, task)
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["status", "--json"])
+
+    assert result.exit_code == 0
+    assert json.loads(result.output) == [task_to_dict(task, {"task-a"})]
 
 
 def test_status_without_json_flag_still_renders_table(tmp_path: Path, monkeypatch) -> None:

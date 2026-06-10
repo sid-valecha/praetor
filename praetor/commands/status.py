@@ -10,6 +10,7 @@ import typer
 from praetor.commands import require_workspace
 from praetor.dag import compute_ready_set
 from praetor.models import TaskStatus
+from praetor.serialize import task_to_dict
 from praetor.state import list_tasks
 
 console = Console()
@@ -39,25 +40,7 @@ def status_command(
     ready_ids = {task.id for task in compute_ready_set(tasks)}
 
     if json_output:
-        payload = [
-            {
-                "id": task.id,
-                "status": task.status.value,
-                "depends_on": task.depends_on,
-                "parallel_ok": task.parallel_ok,
-                "merge_strategy": task.merge_strategy,
-                "agent": task.agent,
-                "verify": task.verify,
-                "review": task.review,
-                "retry": task.retry,
-                "priority": task.priority,
-                "env": task.env,
-                "context_files": task.context_files,
-                "created": task.created.isoformat().replace("+00:00", "Z"),
-                "ready": task.status is TaskStatus.pending and task.id in ready_ids,
-            }
-            for task in tasks
-        ]
+        payload = [task_to_dict(task, ready_ids) for task in tasks]
         print(json.dumps(payload))
         return
 

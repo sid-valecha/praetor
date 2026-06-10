@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "praetor": {
+      "command": "praetor",
+      "args": ["mcp"],
+      "cwd": "${CLAUDE_PROJECT_DIR}"
+    }
+  }
+}

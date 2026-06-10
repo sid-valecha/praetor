@@ -220,6 +220,10 @@ docker run --rm -it -v "$PWD:/repo" -w /repo praetor-cli \
 
 [v1 parallel execution](roadmap.md#roadmap) adds worktrees, a worker pool, concurrent execution for eligible DAG siblings, and manual or automatic merge integration. [v1.1 MCP + Claude Code plugin](roadmap.md#roadmap) adds the MCP server and plugin distribution. v2 adds planner mode; v3 adds the meta loop and a GUI over the same file-based state.
 
+## Use with Claude Code
+
+Praetor ships a Claude Code plugin bundle in `plugin/`. It provides the task-authoring and plan-decomposition skills plus an MCP server config that runs `praetor mcp`; install or test it with `claude --plugin-dir ./plugin` after making sure the `praetor` executable is on `PATH`.
+
 ## License
 
 See [LICENSE](LICENSE).

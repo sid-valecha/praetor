@@ -1,0 +1,11 @@
+{
+  "name": "praetor",
+  "version": "1.0.0",
+  "description": "Agent-first orchestration for Praetor task queues.",
+  "author": {
+    "name": "Sid Valecha"
+  },
+  "homepage": "https://github.com/sid-valecha/praetor",
+  "repository": "https://github.com/sid-valecha/praetor",
+  "license": "MIT"
+}
