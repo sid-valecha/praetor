@@ -41,6 +41,7 @@ dependencies = [
     "pydantic>=2.7",
     "python-frontmatter>=1.1",
     "rich>=13.7",
+    "watchdog>=4.0",
 ]
 
 [project.urls]

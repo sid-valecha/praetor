@@ -82,6 +82,16 @@ For an auto-merge run, opt in explicitly:
 praetor run --max-parallel 4 --merge-strategy auto
 ```
 
+## Watch Mode
+
+`praetor loop` runs an initial drain, then stays alive and watches `.praetor/tasks/` for new task markdown files. Use it when a PM session or MCP orchestrator should keep feeding work without manually restarting the runner.
+
+```bash
+praetor loop --max-parallel 4
+```
+
+Pass `--once` to get the same single-pass behavior while exercising the loop command surface. In long-running mode, Ctrl-C requests cooperative shutdown: Praetor finishes any in-flight drain pass, does not start another one, and exits cleanly.
+
 ## CLI Reference
 
 | Command | Key options | Purpose |
@@ -91,6 +101,7 @@ praetor run --max-parallel 4 --merge-strategy auto
 | `praetor add` | `--title`, `--depends-on`, `--verify`, `--parallel-ok/--no-parallel-ok`, `--merge-strategy`, `--agent` | Create a task markdown file under `.praetor/tasks/`. |
 | `praetor status` | `--json` | Print task status. With `--json`, emit a JSON array (one object per task with all schema fields plus a derived `ready` bool) instead of the Rich table — for scripts, CI pipelines, and non-MCP agent callers. |
 | `praetor run` | `--adapter`, `--max-parallel`, `--base-branch`, `--merge-strategy` | Drain ready tasks with the selected agent adapter. `--max-parallel 1` runs sequentially; values greater than 1 use worktrees. |
+| `praetor loop` | `--adapter`, `--max-parallel`, `--base-branch`, `--merge-strategy`, `--once`, `--poll-interval` | Drain once, then keep watching `.praetor/tasks/` and drain again when new work appears. |
 | `praetor merge` | `TASK_ID...`, `--all`, `--retry`, `--base-branch` | Merge `pending_merge` tasks back to the base branch. With `--retry`, also retry `merge_failed` tasks. |
 | `praetor logs <task-id>` | `<task-id>` | Print the saved log for one task. |
 
