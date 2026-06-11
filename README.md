@@ -64,7 +64,7 @@ praetor merge --all
 
 `praetor run --max-parallel 4` enables parallel mode. Ready tasks with `parallel_ok: true` may run concurrently; tasks with `parallel_ok: false` run alone after the active pool drains. The default is still `--max-parallel 1`, which preserves sequential v0 behavior.
 
-Manual merge is the default in parallel mode. After an agent exits, Praetor runs the task's `verify` command in that task's worktree, commits the verified worktree state to `praetor/<task-id>`, and marks the task `pending_merge`. `praetor status` shows `pending_merge` when verified work is waiting for integration and `merge_failed` when an attempted merge failed and needs human recovery.
+Manual merge is the default in parallel mode. After an agent exits, Praetor runs the task's `verify` command in that task's worktree, commits the verified worktree state to `praetor/<task-id>`, and marks the task `pending_merge`. `praetor status` shows `pending_merge` when verified work is waiting for integration and `merge_failed` when an attempted merge or post-merge verification failed and needs human recovery.
 
 Merge all waiting tasks:
 
@@ -121,7 +121,7 @@ The CLI `--merge-strategy` flag on `praetor run` overrides all tasks for that ru
 
 The `--merge-strategy` flag is only valid in parallel mode; passing it with `--max-parallel 1` is rejected with a clear error.
 
-`praetor merge` uses `git merge --no-ff --no-edit` from `praetor/<task-id>` into the base branch. It refuses to merge if the base repo has uncommitted changes, records conflicts in the task log, and leaves the task as `merge_failed` for retry.
+`praetor merge` uses `git merge --no-ff --no-edit` from `praetor/<task-id>` into the base branch. It refuses to merge if the base repo has uncommitted changes, records conflicts in the task log, and leaves the task as `merge_failed` for retry. After a successful merge, Praetor reruns that task's `verify` command on the base branch; a non-zero post-merge verify result also leaves the task as `merge_failed`.
 
 ## Worktrees
 
@@ -169,6 +169,10 @@ agent: claude
 verify: pytest tests/test_auth.py
 review: off
 merge_strategy: manual
+retry: 0
+priority: normal
+env: {}
+context_files: []
 created: 2026-06-08T14:22:00Z
 ---
 
@@ -187,13 +191,17 @@ Summarize the files changed and include the verify output.
 | Field | Description |
 |---|---|
 | `id` | Stable task id; also used as the task filename stem. |
-| `status` | Persisted values are `pending`, `running`, `done`, `failed`, `blocked`, `pending_merge`, or `merge_failed`. The DAG resolver and `praetor status` derive readiness from `pending` tasks whose dependencies are all `done`; readiness is not a persisted status. |
+| `status` | Persisted values are `pending`, `running`, `done`, `failed`, `blocked`, `pending_merge`, `merge_failed`, or `cancelled`. The DAG resolver and `praetor status` derive readiness from `pending` tasks whose dependencies are all `done`; readiness is not a persisted status. |
 | `depends_on` | List of task ids that must be `done` before this task can run. |
 | `parallel_ok` | Whether this task may run concurrently with other ready tasks. Default: `true`. Set `false` for cross-cutting or exclusive work. |
 | `agent` | Intended agent for this task. Default: `claude`. `praetor run --adapter` selects the runtime adapter for the run. |
 | `verify` | Shell command run after the agent exits. A non-zero exit keeps the task from completing. |
 | `review` | v1+: reviewer mode, one of `off`, `lenient`, or `strict`. Present in v0 files for forward compatibility. |
 | `merge_strategy` | Parallel-mode merge behavior, one of `manual` or `auto`. Default: `manual`. `praetor run --merge-strategy` overrides this field for all tasks in that run. |
+| `retry` | Forward-compatible retry counter. Present in task files; retry policy is not implemented yet. |
+| `priority` | Forward-compatible scheduling hint, one of `low`, `normal`, or `high`. Present in task files; ready-set priority ordering is not implemented yet. |
+| `env` | Forward-compatible per-task environment map. Present in task files; runtime env propagation is tracked in [issue #13](https://github.com/sid-valecha/praetor/issues/13). |
+| `context_files` | Forward-compatible list of context/file-scope hints. Present in task files; adapter use is deferred. |
 | `created` | UTC timestamp for task creation. |
 | `body` | Markdown body after the frontmatter. It is parsed into the task model and passed to the agent; it is not written as a frontmatter field. |
 
@@ -203,16 +211,16 @@ Praetor stores state as files under `.praetor/`: task markdown in `.praetor/task
 
 With `--max-parallel 1`, Praetor runs one ready task at a time in the current checkout. After the agent exits, the task's `verify` command gates whether the task is marked `done` or `failed`.
 
-With `--max-parallel > 1`, Praetor creates a worktree and branch for each dispatched task, runs the agent and verify command inside that worktree, commits the verified result, then either parks it as `pending_merge` or merges it automatically depending on the effective merge strategy.
+With `--max-parallel > 1`, Praetor creates a worktree and branch for each dispatched task, runs the agent and verify command inside that worktree, commits the verified result, then either parks it as `pending_merge` or merges it automatically depending on the effective merge strategy. Once merged, Praetor reruns that task's `verify` command on the base branch before marking the task `done`.
 
 ## Limitations
 
 v1 parallel execution is functional, but these items are intentionally not implemented yet:
 
 - Dispatch-time conflict detection for overlapping task scopes: [issue #4](https://github.com/sid-valecha/praetor/issues/4)
-- Post-merge verification on the base branch: [issue #5](https://github.com/sid-valecha/praetor/issues/5)
 - Worktree cleanup flag for disk-pressure management: [issue #7](https://github.com/sid-valecha/praetor/issues/7)
 - Multi-OS CI: [issue #8](https://github.com/sid-valecha/praetor/issues/8)
+- Per-task env propagation, run history, cancel command, blocked-task auto-unblock, and cost/token accounting are tracked in [issues](https://github.com/sid-valecha/praetor/issues).
 
 ## Docker / Sandboxed Runs
 

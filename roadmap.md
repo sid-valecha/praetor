@@ -62,7 +62,7 @@ All three share identical CLI substrate and state files.
 
 **Stack:** Python 3.11+ in the `praetor` conda environment (Typer, Pydantic, python-frontmatter, Rich, pytest, Ruff).
 **State location:** `.praetor/` per-repo, gitignored by default.
-**State files:** `tasks/<id>.md`, `logs/<id>.log`, `state.json`, `context.md`, `decisions.md`.
+**State files:** `tasks/<id>.md`, `logs/<id>.log`, `state.json`, `context.md`.
 
 `tasks/<id>.md` is the source of truth for task status and task metadata. `state.json` is for global/run metadata only, such as the last run timestamp, active run id, CLI version, and last aggregate verify result. Do not duplicate per-task status in `state.json`.
 
@@ -73,12 +73,17 @@ All three share identical CLI substrate and state files.
 ```markdown
 ---
 id: 003-stripe-webhook
-status: pending          # pending | running | done | failed | blocked
+status: pending          # pending | running | pending_merge | merge_failed | cancelled | done | failed | blocked
 depends_on: [002-stripe-keys]
 parallel_ok: true        # honored by v1+
 agent: claude            # claude | codex | aider — v1.3+
 verify: pytest tests/billing/test_webhook.py
 review: off              # off | lenient | strict — v1.2+
+merge_strategy: manual   # manual | auto — honored by v1+
+retry: 0                 # future retry policy metadata
+priority: normal         # low | normal | high — future scheduling hint
+env: {}                  # future per-task env propagation
+context_files: []        # future file/context hints
 created: 2026-05-23T14:22:00Z
 ---
 
@@ -94,7 +99,7 @@ created: 2026-05-23T14:22:00Z
 [what artifacts/output prove this is done]
 ```
 
-Frontmatter fields not yet honored by v0 (`parallel_ok`, `review`, non-claude `agent`) **exist from day one** so files don't get migrated later.
+Forward-compatible frontmatter fields (`parallel_ok`, `review`, non-claude `agent`, `merge_strategy`, `retry`, `priority`, `env`, `context_files`) exist so files do not need schema migration later. Some are honored today; others are metadata until their runtime behavior lands.
 
 Readiness is derived in v0: a task is ready to run when `status: pending` and all dependencies are `done`. Do not persist `status: ready` in v0 task files. The model may continue accepting `ready` as a compatibility/status enum value, but the v0 DAG and runner should not write it.
 
@@ -107,6 +112,8 @@ class TaskResult(BaseModel):
     stderr: str
     duration_ms: int
     diff: str | None = None  # populated by runner via git, not adapter
+    tokens_used: int | None = None
+    cost_usd: float | None = None
 
 class AgentAdapter(Protocol):
     name: str
@@ -142,7 +149,7 @@ Ship as plain markdown in `skills/`. Claude Code picks them up when the plugin i
 
 ## Roadmap
 
-**v0 — Foundation (Monday target)**
+**v0 — Foundation (shipped)**
 - Repo, Python package scaffold using conda for local development (CI deferred to v0.5)
 - Task schema + state layer + DAG resolver
 - `AgentAdapter` interface; ClaudeCode adapter live; Codex stubbed
@@ -150,16 +157,20 @@ Ship as plain markdown in `skills/`. Claude Code picks them up when the plugin i
 - Verify step + per-task logs
 - Skills written: `task-authoring`, `plan-decomposition`
 
-**v1 — Parallel execution**
+**v1 — Parallel execution (shipped)**
 - Worktree manager
 - Worker pool, `--max-parallel N`
 - DAG executor dispatches eligible siblings concurrently
-- Branch-per-task, conflict detection
+- Branch-per-task, manual/auto merge, post-merge verification
+- Conflict detection remains deferred as [issue #4](https://github.com/sid-valecha/praetor/issues/4)
 
-**v1.1 — MCP server + plugin release**
+**v1.1 — MCP server + plugin release (shipped)**
 - `praetor mcp` entrypoint
-- Tools: `add_task`, `status`, `next_ready`, `mark_blocked`, `get_logs`
-- First Claude Code plugin published
+- Tools: `init_workspace`, `add_task`, `list_tasks`, `get_task`, `next_ready`, `start_drain`, `merge_task`, `merge_all_pending`, `get_logs`
+- Claude Code plugin bundle under `plugin/`
+- `praetor loop` watch mode
+- `praetor reset` recovery command
+- Progress events for `praetor run` / `praetor loop`
 
 **v1.2 — Adversarial reviewer**
 - Post-verify read-only subagent reviews diff against task+plan
@@ -175,14 +186,14 @@ Ship as plain markdown in `skills/`. Claude Code picks them up when the plugin i
 - `praetor plan "goal"` short-lived planning session writes plan.md + drafts tasks
 
 **v2.x — Quality of life**
-- Watch mode, retry policy, cost tracking, hooks (pre/post task, e.g. ntfy)
+- Retry policy, cost tracking, run history, hooks (pre/post task, e.g. ntfy)
 
 **v3 — Meta loop + GUI**
 - Post-task summaries → `learnings.md`
 - Reflection pass updates `context.md`
 - Web GUI reading `.praetor/` state (trivial because state is on-disk markdown/json)
 
-## Monday landing zone
+## Historical Monday landing zone
 
 Realistic: all of v0, possibly 30–50% of v1 (worktree scaffold, parallel runner rough). Anything past v1 is post-Monday, on the same base.
 

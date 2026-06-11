@@ -38,13 +38,17 @@ Every task file must include the current Praetor task schema so queued work can 
 | Field | Type | Default | Version | Notes |
 | --- | --- | --- | --- | --- |
 | `id` | string | none, required | v0 | Must match `.praetor/tasks/<id>.md`. |
-| `status` | enum string | `pending` | v0 | Use `pending`, `running`, `pending_merge`, `merge_failed`, `done`, `failed`, or `blocked`. The DAG resolver and `praetor status` derive readiness from `pending` tasks whose dependencies are all `done`; readiness is not a persisted status. |
+| `status` | enum string | `pending` | v0 | Use `pending`, `running`, `pending_merge`, `merge_failed`, `cancelled`, `done`, `failed`, or `blocked`. The DAG resolver and `praetor status` derive readiness from `pending` tasks whose dependencies are all `done`; readiness is not a persisted status. |
 | `depends_on` | list of task ids | `[]` | v0 | List every prerequisite task id. Empty list means no prerequisites. |
 | `parallel_ok` | boolean | `true` | v1 honored | Set `false` for unsafe or cross-cutting sibling work. |
 | `agent` | string | `claude` | v0 | Expected values are currently adapter names such as `claude`, `codex`, or `aider`; `praetor run --adapter` selects the runtime adapter. |
 | `verify` | string or null | `null` | v0 | Prefer a real command. It is run by the shell after the agent finishes. |
 | `review` | enum string | `off` | v1.2+ honored | Use `off`, `lenient`, or `strict`. |
 | `merge_strategy` | enum string | `manual` | v1 honored | Use `manual` or `auto`. `manual` stops after verify and parks the task as `pending_merge` for `praetor merge`; `auto` merges automatically after verify passes. |
+| `retry` | integer | `0` | future | Retry count metadata. Runner retry policy is deferred. |
+| `priority` | enum string | `normal` | future | Scheduling hint: `low`, `normal`, or `high`. Ready-set priority ordering is deferred. |
+| `env` | map | `{}` | future | Per-task environment metadata. Runtime env propagation is deferred. |
+| `context_files` | list of paths | `[]` | future | File/context hints for agents. Adapter use is deferred. |
 | `created` | UTC datetime string | none, required | v0 | Use ISO 8601 with `Z`, for example `2026-06-07T18:30:00Z`. |
 | `body` | markdown body | empty string | v0 | The content after frontmatter. It is parsed into the task model and passed to the agent; do not put it in frontmatter. |
 
@@ -153,5 +157,5 @@ Report the passing pytest output and summarize any production files changed. If 
 - Missing `depends_on`: if the task needs code, fixtures, schema, docs, or generated files from another task, list that task id.
 - Body is a spec, not a prompt: convert goals into actionable instructions with files, constraints, and expected proof.
 - Persisting `status: ready`: keep `status: pending`; Praetor derives readiness from done dependencies.
-- Omitting schema fields: include `parallel_ok`, `agent`, `merge_strategy`, and `review` even when their default values are acceptable.
+- Omitting schema fields: include `parallel_ok`, `agent`, `merge_strategy`, `review`, `retry`, `priority`, `env`, and `context_files` even when their default values are acceptable.
 - Oversized tasks: split work if the verify command cannot prove completion for one agent session.

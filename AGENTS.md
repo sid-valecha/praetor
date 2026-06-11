@@ -37,7 +37,7 @@ These three files override anything in this AGENTS.md if they conflict — they 
 ## Conventions
 
 - **State location:** `.praetor/` per-repo, gitignored
-- **Frontmatter fields:** include all v0+v1 fields from day one (`parallel_ok`, `review`, `agent`)
+- **Frontmatter fields:** include current schema fields from day one (`parallel_ok`, `review`, `agent`, `merge_strategy`, `retry`, `priority`, `env`, `context_files`)
 - **Filenames:** snake_case for Python modules
 - **Commits:** the user commits manually; agents do not commit unless explicitly asked
 - **No emojis in code or commits** unless the user asks
