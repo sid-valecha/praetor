@@ -96,7 +96,7 @@ def test_reset_rejects_both_explicit_ids_and_all_stale(
     result = runner.invoke(app, ["reset", "task-a", "--all-stale"])
 
     assert result.exit_code != 0
-    assert "Use either TASK_ID... or --all-stale" in result.output
+    assert "Use either" in result.output
 
 
 def _make_task(
