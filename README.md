@@ -7,6 +7,8 @@
 
 Praetor is a local-first task queue and DAG executor for coding agents; it is not another coding agent.
 
+![Praetor parallel mode demo](docs/demo.gif)
+
 ## Install
 
 Praetor requires Python 3.11 or newer.
