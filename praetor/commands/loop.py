@@ -1,4 +1,5 @@
 from pathlib import Path
+import sys
 from typing import Annotated
 
 import typer
@@ -6,7 +7,16 @@ from typer._click.exceptions import ClickException
 
 from praetor.adapters import get_adapter
 from praetor.commands import raise_usage_error, require_workspace
+from praetor.events import RunnerEvent
 from praetor.loop import LoopOptions, loop_queue
+
+
+def _print_event(event: RunnerEvent) -> None:
+    prefix = f"[{event.type}]"
+    if event.task_id:
+        print(f"{prefix} {event.task_id}", file=sys.stderr)
+    else:
+        print(prefix, file=sys.stderr)
 
 
 def loop_command(
@@ -83,6 +93,7 @@ def loop_command(
                 poll_interval=poll_interval,
                 once=once,
             ),
+            on_event=_print_event,
         )
     except Exception as exc:
         raise ClickException(str(exc)) from exc

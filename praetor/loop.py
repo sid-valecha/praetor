@@ -9,6 +9,7 @@ import threading
 from types import FrameType
 
 from praetor.dag import compute_ready_set
+from praetor.events import EventCallback
 from praetor.models import AgentAdapter, TaskStatus
 from praetor.runner import drain_queue
 from praetor.state import list_tasks
@@ -49,7 +50,12 @@ class TaskFileHandler(FileSystemEventHandler):
             self._wake.set()
 
 
-def loop_queue(repo_root: Path, adapter: AgentAdapter, options: LoopOptions) -> None:
+def loop_queue(
+    repo_root: Path,
+    adapter: AgentAdapter,
+    options: LoopOptions,
+    on_event: EventCallback | None = None,
+) -> None:
     stop_event = threading.Event()
     wake_event = threading.Event()
     detected_task_ids: queue.SimpleQueue[str] = queue.SimpleQueue()
@@ -57,7 +63,7 @@ def loop_queue(repo_root: Path, adapter: AgentAdapter, options: LoopOptions) -> 
 
     observer: Observer | None = None
     try:
-        _drain_and_log(repo_root, adapter, options)
+        _drain_and_log(repo_root, adapter, options, on_event)
         if options.once:
             return
 
@@ -66,10 +72,10 @@ def loop_queue(repo_root: Path, adapter: AgentAdapter, options: LoopOptions) -> 
         while not stop_event.is_set():
             ready_tasks = compute_ready_set(list_tasks(repo_root))
             if ready_tasks:
-                _drain_and_log(repo_root, adapter, options)
+                _drain_and_log(repo_root, adapter, options, on_event)
                 continue
 
-            print("[waiting] queue empty; watching .praetor/tasks/...")
+            print("[waiting] queue empty; watching .praetor/tasks/...", file=sys.stderr)
             wake_event.wait(timeout=options.poll_interval)
             if stop_event.is_set():
                 break
@@ -78,11 +84,11 @@ def loop_queue(repo_root: Path, adapter: AgentAdapter, options: LoopOptions) -> 
                 wake_event.clear()
                 task_id = _drain_latest_detected_task_id(detected_task_ids)
                 if task_id is None:
-                    print("[wake] new task detected: unknown")
+                    print("[wake] new task detected: unknown", file=sys.stderr)
                 else:
-                    print(f"[wake] new task detected: {task_id}")
+                    print(f"[wake] new task detected: {task_id}", file=sys.stderr)
             else:
-                print("[wake] poll interval elapsed")
+                print("[wake] poll interval elapsed", file=sys.stderr)
     finally:
         if observer is not None:
             observer.stop()
@@ -90,7 +96,12 @@ def loop_queue(repo_root: Path, adapter: AgentAdapter, options: LoopOptions) -> 
         _restore_sigint_handler(previous_sigint_handler)
 
 
-def _drain_and_log(repo_root: Path, adapter: AgentAdapter, options: LoopOptions) -> None:
+def _drain_and_log(
+    repo_root: Path,
+    adapter: AgentAdapter,
+    options: LoopOptions,
+    on_event: EventCallback | None,
+) -> None:
     before_successful = _successful_task_ids(repo_root)
     drain_queue(
         repo_root,
@@ -98,12 +109,16 @@ def _drain_and_log(repo_root: Path, adapter: AgentAdapter, options: LoopOptions)
         max_parallel=options.max_parallel,
         base_branch=options.base_branch,
         merge_strategy=options.merge_strategy,
+        on_event=on_event,
     )
     completed_count = len(_successful_task_ids(repo_root) - before_successful)
     if options.max_parallel == 1:
-        print(f"[drained] {completed_count} tasks completed (sequential)")
+        print(f"[drained] {completed_count} tasks completed (sequential)", file=sys.stderr)
     else:
-        print(f"[drained] {completed_count} tasks completed (max_parallel={options.max_parallel})")
+        print(
+            f"[drained] {completed_count} tasks completed (max_parallel={options.max_parallel})",
+            file=sys.stderr,
+        )
 
 
 def _successful_task_ids(repo_root: Path) -> set[str]:
@@ -147,8 +162,11 @@ def _install_sigint_handler(stop_event: threading.Event):
     def handle_sigint(_signum: int, _frame: FrameType | None) -> None:
         nonlocal reported
         if not reported:
-            print("Shutting down...")
-            print("[stopping] received SIGINT, will exit after current pass")
+            print("Shutting down...", file=sys.stderr)
+            print(
+                "[stopping] received SIGINT, will exit after current pass",
+                file=sys.stderr,
+            )
             reported = True
         stop_event.set()
 

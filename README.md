@@ -103,6 +103,7 @@ Pass `--once` to get the same single-pass behavior while exercising the loop com
 | `praetor run` | `--adapter`, `--max-parallel`, `--base-branch`, `--merge-strategy` | Drain ready tasks with the selected agent adapter. `--max-parallel 1` runs sequentially; values greater than 1 use worktrees. |
 | `praetor loop` | `--adapter`, `--max-parallel`, `--base-branch`, `--merge-strategy`, `--once`, `--poll-interval` | Drain once, then keep watching `.praetor/tasks/` and drain again when new work appears. |
 | `praetor merge` | `TASK_ID...`, `--all`, `--retry`, `--base-branch` | Merge `pending_merge` tasks back to the base branch. With `--retry`, also retry `merge_failed` tasks. |
+| `praetor reset` | `TASK_ID...`, `--clean-worktree`, `--all-stale` | Reset failed, blocked, merge-failed, or stale-running tasks back to `pending`. |
 | `praetor logs <task-id>` | `<task-id>` | Print the saved log for one task. |
 
 ## Merge Strategy
@@ -144,7 +145,13 @@ If a task is `merge_failed`, inspect the task log and worktree, resolve the unde
 praetor merge --retry <task-id>
 ```
 
-If a previous runner crashed and left a task as `running`, `praetor run` fails closed with a stale-running error. Recovery UX is tracked as [issue #6](https://github.com/sid-valecha/praetor/issues/6). The current manual workaround is to inspect `.praetor/worktrees/<task-id>/` and `.praetor/logs/<task-id>.log`, then edit `.praetor/tasks/<task-id>.md` to set `status: pending` before running Praetor again.
+If a previous runner crashed and left a task as `running`, `praetor run` fails closed with a stale-running error. Reset selected tasks or all stale-running tasks back to `pending`:
+
+```bash
+praetor reset <task-id>                    # set back to pending
+praetor reset <task-id> --clean-worktree   # also remove the worktree
+praetor reset --all-stale                  # reset every task currently in 'running' state
+```
 
 ## Task File Schema
 
@@ -202,7 +209,6 @@ v1 parallel execution is functional, but these items are intentionally not imple
 
 - Dispatch-time conflict detection for overlapping task scopes: [issue #4](https://github.com/sid-valecha/praetor/issues/4)
 - Post-merge verification on the base branch: [issue #5](https://github.com/sid-valecha/praetor/issues/5)
-- Stale-running recovery command such as `praetor reset`: [issue #6](https://github.com/sid-valecha/praetor/issues/6)
 - Worktree cleanup flag for disk-pressure management: [issue #7](https://github.com/sid-valecha/praetor/issues/7)
 - Multi-OS CI: [issue #8](https://github.com/sid-valecha/praetor/issues/8)
 
