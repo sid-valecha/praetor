@@ -46,6 +46,39 @@ def test_manual_parallel_merge_recovery_flow(tmp_path: Path, monkeypatch) -> Non
     assert _branch_contains(repo_root, "main", "praetor/task-c")
 
 
+def test_manual_merge_marks_merge_failed_when_post_merge_verify_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_root = _scratch_repo(tmp_path)
+    _write_task(
+        repo_root,
+        _make_task(
+            "task-a",
+            offset=0,
+            verify=(
+                'python -c "from pathlib import Path; '
+                "raise SystemExit(1 if Path.cwd().name == 'repo' else 0)\""
+            ),
+        ),
+    )
+
+    drain_queue(repo_root, WritingAdapter(), max_parallel=2)
+
+    assert get_task(repo_root, "task-a").status is TaskStatus.pending_merge
+
+    monkeypatch.chdir(repo_root)
+    result = runner.invoke(app, ["merge", "task-a"])
+
+    assert result.exit_code == 0
+    assert get_task(repo_root, "task-a").status is TaskStatus.merge_failed
+    assert _branch_contains(repo_root, "main", "praetor/task-a")
+    assert "post-merge verify failed" in result.output
+    log_text = (repo_root / ".praetor" / "logs" / "task-a.log").read_text()
+    assert "Post-merge verify command:" in log_text
+    assert "post-merge verify failed" in log_text
+
+
 def _scratch_repo(tmp_path: Path) -> Path:
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
@@ -60,11 +93,11 @@ def _scratch_repo(tmp_path: Path) -> Path:
     return repo_root
 
 
-def _make_task(task_id: str, *, offset: int = 0) -> Task:
+def _make_task(task_id: str, *, offset: int = 0, verify: str = "true") -> Task:
     return Task(
         id=task_id,
         status=TaskStatus.pending,
-        verify="true",
+        verify=verify,
         created=datetime(2026, 6, 8, 12, 0, tzinfo=UTC) + timedelta(minutes=offset),
         body=f"# {task_id}\n\nTASK_ID: {task_id}\n",
     )

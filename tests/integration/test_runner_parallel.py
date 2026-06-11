@@ -62,14 +62,14 @@ def scratch_repo(tmp_path: Path) -> Path:
 
 def test_three_independent_tasks_run_in_parallel(scratch_repo: Path) -> None:
     _write_three_tasks(scratch_repo)
-    adapter = SleepRecordingAdapter(sleep_s=0.2)
+    adapter = SleepRecordingAdapter(sleep_s=1.0)
 
-    start = time.perf_counter()
     drain_queue(scratch_repo, adapter, max_parallel=3)
-    elapsed = time.perf_counter() - start
 
-    assert elapsed < 0.5
     assert len(adapter.records) == 3
+    latest_start = max(start for _, _, start, _ in adapter.records)
+    earliest_end = min(end for _, _, _, end in adapter.records)
+    assert latest_start < earliest_end
 
 
 def test_parallel_drain_creates_worktrees(scratch_repo: Path) -> None:
@@ -111,6 +111,35 @@ def test_parallel_drain_with_auto_override_merges_and_marks_done(
     assert _branch_contains(scratch_repo, "main", "praetor/task-a")
     assert _branch_contains(scratch_repo, "main", "praetor/task-b")
     assert _branch_contains(scratch_repo, "main", "praetor/task-c")
+
+
+def test_auto_merge_marks_merge_failed_when_post_merge_verify_fails(
+    scratch_repo: Path,
+) -> None:
+    _write_task(
+        scratch_repo,
+        _make_task(
+            "task-a",
+            offset=0,
+            verify=(
+                'python -c "from pathlib import Path; '
+                "raise SystemExit(1 if Path.cwd().name == 'repo' else 0)\""
+            ),
+        ),
+    )
+
+    drain_queue(
+        scratch_repo,
+        FileEditingAdapter({"task-a": {"task-a.txt": "task-a\n"}}),
+        max_parallel=2,
+        merge_strategy="auto",
+    )
+
+    assert get_task(scratch_repo, "task-a").status is TaskStatus.merge_failed
+    assert _branch_contains(scratch_repo, "main", "praetor/task-a")
+    log_text = (scratch_repo / ".praetor" / "logs" / "task-a.log").read_text()
+    assert "Post-merge verify command:" in log_text
+    assert "post-merge verify failed" in log_text
 
 
 def test_parallel_drain_with_per_task_auto_field_merges(scratch_repo: Path) -> None:
@@ -206,6 +235,7 @@ def _make_task(
     parallel_ok: bool = True,
     depends_on: list[str] | None = None,
     merge_strategy: str = "manual",
+    verify: str = "true",
 ) -> Task:
     return Task(
         id=task_id,
@@ -213,7 +243,7 @@ def _make_task(
         depends_on=depends_on or [],
         parallel_ok=parallel_ok,
         merge_strategy=merge_strategy,
-        verify="true",
+        verify=verify,
         created=datetime(2026, 6, 8, 12, 0, tzinfo=UTC) + timedelta(minutes=offset),
         body=f"# {task_id}\n\nTASK_ID: {task_id}\n",
     )

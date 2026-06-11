@@ -18,7 +18,7 @@ def test_merge_single_pending_merge_task_succeeds(tmp_path: Path, monkeypatch) -
     _write_task(tmp_path, _make_task("task-a", TaskStatus.pending_merge))
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
-        "praetor.commands.merge.merge_task",
+        "praetor.merge_queue.merge_task",
         lambda task_id, repo_root, base_branch: MergeResult(
             task_id=task_id,
             success=True,
@@ -39,7 +39,7 @@ def test_merge_skips_non_pending_merge_tasks(tmp_path: Path, monkeypatch) -> Non
     monkeypatch.chdir(tmp_path)
     calls = []
     monkeypatch.setattr(
-        "praetor.commands.merge.merge_task",
+        "praetor.merge_queue.merge_task",
         lambda task_id, repo_root, base_branch: calls.append(task_id),
     )
 
@@ -69,7 +69,7 @@ def test_merge_all_processes_in_dependency_order(tmp_path: Path, monkeypatch) ->
             message="merged",
         )
 
-    monkeypatch.setattr("praetor.commands.merge.merge_task", fake_merge)
+    monkeypatch.setattr("praetor.merge_queue.merge_task", fake_merge)
 
     result = runner.invoke(app, ["merge", "--all"])
 
@@ -92,7 +92,7 @@ def test_merge_retry_processes_merge_failed_tasks(tmp_path: Path, monkeypatch) -
             message="merged",
         )
 
-    monkeypatch.setattr("praetor.commands.merge.merge_task", fake_merge)
+    monkeypatch.setattr("praetor.merge_queue.merge_task", fake_merge)
 
     result = runner.invoke(app, ["merge", "--retry", "task-a"])
 

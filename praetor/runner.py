@@ -11,7 +11,7 @@ from pathlib import Path
 
 from praetor.dag import compute_ready_set, propagate_blocked
 from praetor.events import EventCallback, EventType, RunnerEvent
-from praetor.merge import MergeResult, merge_task
+from praetor.merge_queue import merge_one_task
 from praetor.models import AgentAdapter, Task, TaskResult, TaskStatus
 from praetor.pool import WorkerPool
 from praetor.state import list_tasks, update_task_status
@@ -280,13 +280,12 @@ def _complete_parallel_task(
         _emit(on_event, "task_pending_merge", task_id=task.id)
         return
 
-    _emit(on_event, "merge_started", task_id=task.id)
-    merge_result = merge_task(
-        task.id,
+    merge_one_task(
         repo_root,
+        task.id,
         base_branch=running_task.worktree.base_branch,
+        on_event=on_event,
     )
-    _handle_merge_result(repo_root, merge_result, on_event)
 
 
 def _raise_on_stale_running(tasks: list[Task]) -> None:
@@ -336,26 +335,6 @@ def _commit_worktree_changes(repo_root: Path, task_id: str, worktree_path: Path)
     )
     _append_task_log(repo_root, task_id, f"{commit_result.stdout}{commit_result.stderr}")
     return commit_result.returncode == 0
-
-
-def _handle_merge_result(
-    repo_root: Path,
-    merge_result: MergeResult,
-    on_event: EventCallback | None,
-) -> None:
-    if merge_result.success:
-        update_task_status(repo_root, merge_result.task_id, TaskStatus.done)
-        _emit(on_event, "merge_succeeded", task_id=merge_result.task_id)
-        _emit(on_event, "task_completed", task_id=merge_result.task_id)
-        return
-
-    log_content = f"{merge_result.message}\n"
-    if merge_result.conflict_files:
-        log_content += "Conflict files:\n"
-        log_content += "".join(f"- {path}\n" for path in merge_result.conflict_files)
-    _append_task_log(repo_root, merge_result.task_id, log_content)
-    update_task_status(repo_root, merge_result.task_id, TaskStatus.merge_failed)
-    _emit(on_event, "merge_failed", task_id=merge_result.task_id, detail=merge_result.message)
 
 
 def _emit(

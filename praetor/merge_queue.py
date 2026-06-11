@@ -1,10 +1,11 @@
 from pathlib import Path
+import subprocess
 from typing import Any
 
 from praetor.events import EventCallback, EventType, RunnerEvent
 from praetor.merge import MergeResult, merge_task
-from praetor.models import TaskStatus
-from praetor.state import list_tasks, update_task_status
+from praetor.models import Task, TaskStatus
+from praetor.state import get_task, list_tasks, update_task_status
 
 
 def merge_one_task(
@@ -13,10 +14,10 @@ def merge_one_task(
     base_branch: str = "main",
     on_event: EventCallback | None = None,
 ) -> MergeResult:
+    task = get_task(repo_root, task_id)
     _emit(on_event, "merge_started", task_id=task_id)
     result = merge_task(task_id, repo_root, base_branch=base_branch)
-    _apply_merge_result(repo_root, result, on_event)
-    return result
+    return _apply_merge_result(repo_root, task, result, on_event)
 
 
 def merge_all_pending(
@@ -51,18 +52,62 @@ def merge_all_pending(
 
 def _apply_merge_result(
     repo_root: Path,
+    task: Task,
     result: MergeResult,
     on_event: EventCallback | None,
-) -> None:
+) -> MergeResult:
     if result.success:
+        result = _run_post_merge_verify(repo_root, task, result)
+        if not result.success:
+            _append_task_log(repo_root, result.task_id, _format_merge_failure(result))
+            update_task_status(repo_root, result.task_id, TaskStatus.merge_failed)
+            _emit(on_event, "merge_failed", task_id=result.task_id, detail=result.message)
+            return result
+
         update_task_status(repo_root, result.task_id, TaskStatus.done)
         _emit(on_event, "merge_succeeded", task_id=result.task_id)
         _emit(on_event, "task_completed", task_id=result.task_id)
-        return
+        return result
 
     _append_task_log(repo_root, result.task_id, _format_merge_failure(result))
     update_task_status(repo_root, result.task_id, TaskStatus.merge_failed)
     _emit(on_event, "merge_failed", task_id=result.task_id, detail=result.message)
+    return result
+
+
+def _run_post_merge_verify(
+    repo_root: Path,
+    task: Task,
+    result: MergeResult,
+) -> MergeResult:
+    if task.verify is None:
+        return result
+
+    verify_result = subprocess.run(
+        task.verify,
+        shell=True,
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    log_content = (
+        "\nPost-merge verify command:\n"
+        f"{task.verify}\n"
+        "Post-merge verify output:\n"
+        f"{verify_result.stdout}{verify_result.stderr}"
+    )
+    _append_task_log(repo_root, task.id, log_content)
+
+    if verify_result.returncode == 0:
+        return result
+
+    return result.model_copy(
+        update={
+            "success": False,
+            "message": "post-merge verify failed",
+        }
+    )
 
 
 def _format_merge_failure(result: MergeResult) -> str:

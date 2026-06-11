@@ -5,9 +5,10 @@ import typer
 from rich.console import Console
 
 from praetor.commands import raise_usage_error, require_workspace
-from praetor.merge import MergeResult, merge_task
+from praetor.merge import MergeResult
+from praetor.merge_queue import merge_one_task
 from praetor.models import Task, TaskStatus
-from praetor.state import list_tasks, update_task_status
+from praetor.state import list_tasks
 
 console = Console()
 
@@ -39,8 +40,8 @@ def merge_command(
     tasks = list_tasks(repo_root)
     selected = _select_tasks(tasks, task_ids, all_tasks, retry)
     for task in selected:
-        result = merge_task(task.id, repo_root, base_branch)
-        _apply_merge_result(repo_root, result)
+        result = merge_one_task(repo_root, task.id, base_branch)
+        _print_merge_result(result)
 
 
 def _select_tasks(
@@ -90,28 +91,10 @@ def _topological_order(tasks: list[Task]) -> list[Task]:
     return ordered
 
 
-def _apply_merge_result(repo_root: Path, result: MergeResult) -> None:
+def _print_merge_result(result: MergeResult) -> None:
     if result.success:
-        update_task_status(repo_root, result.task_id, TaskStatus.done)
         suffix = f" ({result.merge_commit_sha})" if result.merge_commit_sha else ""
         console.print(f"[green]Merged {result.task_id}{suffix}[/green]")
         return
 
-    _append_task_log(repo_root, result.task_id, _format_merge_failure(result))
-    update_task_status(repo_root, result.task_id, TaskStatus.merge_failed)
     console.print(f"[red]Merge failed for {result.task_id}: {result.message}[/red]")
-
-
-def _format_merge_failure(result: MergeResult) -> str:
-    content = f"{result.message}\n"
-    if result.conflict_files:
-        content += "Conflict files:\n"
-        content += "".join(f"- {path}\n" for path in result.conflict_files)
-    return content
-
-
-def _append_task_log(repo_root: Path, task_id: str, content: str) -> None:
-    log_path = repo_root / ".praetor" / "logs" / f"{task_id}.log"
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("a") as log_file:
-        log_file.write(content)
