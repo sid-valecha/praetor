@@ -1,15 +1,18 @@
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+import json
 import subprocess
 import threading
 import time
 
 import pytest
+from typer.testing import CliRunner
 
+from praetor.cli import app
 from praetor.frontmatter import dump_task
 from praetor.models import Task, TaskResult, TaskStatus
 from praetor.runner import drain_queue
-from praetor.state import get_task, init_workspace
+from praetor.state import get_task, init_workspace, update_task_status
 from praetor.worktree import create_worktree
 
 
@@ -62,6 +65,38 @@ class ReviewRejectingFileEditingAdapter(FileEditingAdapter):
                 duration_ms=0,
             )
         return super().exec(prompt, cwd, timeout_s)
+
+
+class RetryReviewFileEditingAdapter:
+    name = "retry-file-editor"
+
+    def __init__(
+        self,
+        *,
+        attempt_edits: list[dict[str, str]],
+        review_results: list[TaskResult],
+    ) -> None:
+        self.attempt_edits = attempt_edits
+        self.review_results = review_results
+        self.executor_records: list[tuple[str, Path, str | None]] = []
+        self.review_prompts: list[str] = []
+
+    def exec(self, prompt: str, cwd: Path, timeout_s: float | None = None) -> TaskResult:
+        if prompt.startswith("You are the Praetor task reviewer."):
+            self.review_prompts.append(prompt)
+            return self.review_results.pop(0)
+
+        existing_content = (cwd / "work.txt").read_text() if (cwd / "work.txt").exists() else None
+        attempt_index = len(self.executor_records)
+        edits = self.attempt_edits[attempt_index]
+        for relative_path, content in edits.items():
+            path = cwd / relative_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+        self.executor_records.append((prompt, cwd, existing_content))
+        return TaskResult(
+            exit_code=0, stdout=f"attempt {attempt_index}\n", stderr="", duration_ms=0
+        )
 
 
 @pytest.fixture
@@ -189,6 +224,157 @@ def test_review_failure_overrides_auto_merge(scratch_repo: Path) -> None:
     assert not (scratch_repo / "task-a.txt").exists()
     log_text = (scratch_repo / ".praetor" / "logs" / "task-a.log").read_text()
     assert "verdict: needs_revision" in log_text
+
+
+def test_parallel_review_retry_reuses_rejected_worktree(scratch_repo: Path) -> None:
+    _write_task(
+        scratch_repo, _make_task("task-a", offset=0, review="strict", merge_strategy="manual")
+    )
+    adapter = RetryReviewFileEditingAdapter(
+        attempt_edits=[
+            {"work.txt": "needs fix\n"},
+            {"work.txt": "fixed\n"},
+        ],
+        review_results=[
+            _review_result(
+                "needs_revision",
+                summary="work.txt still has the placeholder",
+                findings=[
+                    {
+                        "severity": "error",
+                        "file": "work.txt",
+                        "message": "placeholder remains",
+                        "recommendation": "replace it with the final text",
+                    }
+                ],
+            ),
+            _review_result("pass", summary="fixed"),
+        ],
+    )
+
+    drain_queue(scratch_repo, adapter, max_parallel=2)
+
+    assert get_task(scratch_repo, "task-a").status is TaskStatus.pending_merge
+    assert get_task(scratch_repo, "task-a").retry == 1
+    assert len(adapter.executor_records) == 2
+    first_prompt, first_cwd, first_existing = adapter.executor_records[0]
+    retry_prompt, retry_cwd, retry_existing = adapter.executor_records[1]
+    assert first_existing is None
+    assert retry_existing == "needs fix\n"
+    assert retry_cwd == first_cwd
+    assert (retry_cwd / "work.txt").read_text() == "fixed\n"
+    assert "Latest reviewer feedback" not in first_prompt
+    assert "Latest reviewer feedback" in retry_prompt
+    assert "work.txt still has the placeholder" in retry_prompt
+
+
+def test_parallel_manual_reset_after_review_failure_reuses_worktree(
+    scratch_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_task(scratch_repo, _make_task("task-a", offset=0, review="strict"))
+    first_adapter = RetryReviewFileEditingAdapter(
+        attempt_edits=[{"work.txt": "needs fix\n"}],
+        review_results=[_review_result("needs_revision", summary="manual fix needed")],
+    )
+    drain_queue(scratch_repo, first_adapter, max_parallel=2, max_review_retries=0)
+    assert get_task(scratch_repo, "task-a").status is TaskStatus.review_failed
+    rejected_path = first_adapter.executor_records[0][1]
+
+    monkeypatch.chdir(scratch_repo)
+    reset_result = CliRunner().invoke(app, ["reset", "task-a"])
+    assert reset_result.exit_code == 0
+
+    second_adapter = RetryReviewFileEditingAdapter(
+        attempt_edits=[{"work.txt": "fixed\n"}],
+        review_results=[_review_result("pass", summary="fixed")],
+    )
+    drain_queue(scratch_repo, second_adapter, max_parallel=2)
+
+    assert get_task(scratch_repo, "task-a").status is TaskStatus.pending_merge
+    retry_prompt, retry_cwd, retry_existing = second_adapter.executor_records[0]
+    assert retry_cwd == rejected_path
+    assert retry_existing == "needs fix\n"
+    assert "manual fix needed" in retry_prompt
+
+
+def test_parallel_manual_reset_after_pass_does_not_reuse_resolved_worktree(
+    scratch_repo: Path,
+) -> None:
+    _write_task(scratch_repo, _make_task("task-a", offset=0, review="strict"))
+    first_adapter = RetryReviewFileEditingAdapter(
+        attempt_edits=[
+            {"work.txt": "needs fix\n"},
+            {"work.txt": "fixed\n"},
+        ],
+        review_results=[
+            _review_result("needs_revision", summary="old rejection"),
+            _review_result("pass", summary="fixed"),
+        ],
+    )
+    drain_queue(scratch_repo, first_adapter, max_parallel=2)
+    assert get_task(scratch_repo, "task-a").status is TaskStatus.pending_merge
+    rejected_path = first_adapter.executor_records[0][1]
+    assert first_adapter.executor_records[1][1] == rejected_path
+    assert rejected_path.exists()
+
+    update_task_status(scratch_repo, "task-a", TaskStatus.pending)
+    second_adapter = RetryReviewFileEditingAdapter(
+        attempt_edits=[{"work.txt": "fresh attempt\n"}],
+        review_results=[_review_result("pass", summary="fresh pass")],
+    )
+    drain_queue(scratch_repo, second_adapter, max_parallel=2)
+
+    assert get_task(scratch_repo, "task-a").status is TaskStatus.failed
+    assert second_adapter.executor_records == []
+    log_text = (scratch_repo / ".praetor" / "logs" / "task-a.log").read_text()
+    assert "Worktree collision for task-a" in log_text
+
+
+def test_parallel_clean_reset_removes_rejected_worktree_for_fresh_replay(
+    scratch_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_task(scratch_repo, _make_task("task-a", offset=0, review="strict"))
+    first_adapter = RetryReviewFileEditingAdapter(
+        attempt_edits=[{"work.txt": "needs fix\n"}],
+        review_results=[_review_result("needs_revision", summary="start clean")],
+    )
+    drain_queue(scratch_repo, first_adapter, max_parallel=2, max_review_retries=0)
+    rejected_path = first_adapter.executor_records[0][1]
+    assert rejected_path.exists()
+
+    monkeypatch.chdir(scratch_repo)
+    reset_result = CliRunner().invoke(app, ["reset", "task-a", "--clean-worktree"])
+    assert reset_result.exit_code == 0
+    assert not rejected_path.exists()
+    assert not _branch_exists(scratch_repo, "praetor/task-a")
+
+    second_adapter = RetryReviewFileEditingAdapter(
+        attempt_edits=[{"work.txt": "fresh fix\n"}],
+        review_results=[_review_result("pass", summary="fixed")],
+    )
+    drain_queue(scratch_repo, second_adapter, max_parallel=2)
+
+    assert get_task(scratch_repo, "task-a").status is TaskStatus.pending_merge
+    _, retry_cwd, retry_existing = second_adapter.executor_records[0]
+    assert retry_cwd == rejected_path
+    assert retry_existing is None
+    assert (retry_cwd / "work.txt").read_text() == "fresh fix\n"
+
+
+def test_corrupt_worktree_collision_still_fails_for_never_reviewed_task(
+    scratch_repo: Path,
+) -> None:
+    worktree = create_worktree("task-a", scratch_repo)
+    (worktree.path / ".praetor-meta.json").unlink()
+    _write_task(scratch_repo, _make_task("task-a", offset=0))
+
+    drain_queue(scratch_repo, SleepRecordingAdapter(), max_parallel=2)
+
+    assert get_task(scratch_repo, "task-a").status is TaskStatus.failed
+    log_text = (scratch_repo / ".praetor" / "logs" / "task-a.log").read_text()
+    assert "Worktree collision for task-a" in log_text
 
 
 def test_parallel_ok_false_runs_alone(scratch_repo: Path) -> None:
@@ -327,3 +513,36 @@ def _git(cwd: Path, *args: str) -> str:
 
 def _branch_contains(repo_root: Path, branch: str, contains: str) -> bool:
     return branch in _git(repo_root, "branch", "--contains", contains)
+
+
+def _branch_exists(repo_root: Path, branch: str) -> bool:
+    completed = subprocess.run(
+        ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return completed.returncode == 0
+
+
+def _review_result(
+    verdict: str,
+    *,
+    severity: str = "info",
+    summary: str = "review summary",
+    findings: list[dict[str, object]] | None = None,
+) -> TaskResult:
+    return TaskResult(
+        exit_code=0,
+        stdout=json.dumps(
+            {
+                "verdict": verdict,
+                "severity": severity,
+                "summary": summary,
+                "findings": findings or [],
+            }
+        ),
+        stderr="",
+        duration_ms=0,
+    )

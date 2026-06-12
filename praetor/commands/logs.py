@@ -3,6 +3,8 @@ from pathlib import Path
 from rich.console import Console
 
 from praetor.commands import require_workspace
+from praetor.recovery import review_failure_for_task
+from praetor.state import get_task
 
 console = Console()
 
@@ -12,8 +14,50 @@ def logs_command(task_id: str) -> None:
     require_workspace(repo_root)
 
     log_path = repo_root / ".praetor" / "logs" / f"{task_id}.log"
+    task = None
+    try:
+        task = get_task(repo_root, task_id)
+    except KeyError:
+        pass
+
+    if task is not None:
+        review_failure = review_failure_for_task(repo_root, task)
+        if review_failure is not None:
+            console.print(_format_review_failure(review_failure), end="")
+
     if not log_path.exists():
         console.print(f"No log found for {task_id}")
         return
 
     console.print(log_path.read_text(), end="")
+
+
+def _format_review_failure(review_failure: dict[str, object]) -> str:
+    lines = [
+        "Review failure:",
+        f"run_id: {review_failure['run_id']}",
+        f"severity: {review_failure['severity']}",
+        f"summary: {review_failure['summary']}",
+    ]
+    findings = review_failure.get("findings")
+    if isinstance(findings, list):
+        for finding in findings:
+            if not isinstance(finding, dict):
+                continue
+            severity = finding.get("severity")
+            message = finding.get("message")
+            file = finding.get("file")
+            line = finding.get("line")
+            location = ""
+            if isinstance(file, str):
+                location = file
+                if isinstance(line, int):
+                    location = f"{location}:{line}"
+            prefix = f"- {severity}"
+            if location:
+                prefix = f"{prefix} {location}"
+            lines.append(f"{prefix}: {message}")
+            recommendation = finding.get("recommendation")
+            if isinstance(recommendation, str) and recommendation:
+                lines.append(f"  recommendation: {recommendation}")
+    return "\n".join(lines) + "\n\n"

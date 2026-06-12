@@ -6,6 +6,7 @@ from praetor.adapters.claude import ClaudeCodeAdapter
 from praetor.dag import compute_ready_set
 from praetor.merge_queue import merge_all_pending as merge_all_pending_core
 from praetor.merge_queue import merge_one_task
+from praetor.recovery import review_failure_for_task
 from praetor.runner import drain_queue
 from praetor.run_history import latest_run
 from praetor.serialize import task_to_dict
@@ -26,15 +27,18 @@ def init_workspace(repo_root: str) -> dict[str, list[str]]:
 @server.tool()
 def list_tasks(repo_root: str) -> list[dict[str, Any]]:
     """List Praetor tasks with derived readiness."""
-    tasks = state_list_tasks(Path(repo_root))
+    root = Path(repo_root)
+    tasks = state_list_tasks(root)
     ready_ids = {task.id for task in compute_ready_set(tasks)}
-    return [task_to_dict(task, ready_ids) for task in tasks]
+    return [task_to_dict(task, ready_ids, repo_root=root, tasks=tasks) for task in tasks]
 
 
 @server.tool()
 def get_task(repo_root: str, task_id: str) -> dict[str, Any]:
     """Fetch one Praetor task."""
-    return task_to_dict(state_get_task(Path(repo_root), task_id))
+    root = Path(repo_root)
+    tasks = state_list_tasks(root)
+    return task_to_dict(state_get_task(root, task_id), repo_root=root, tasks=tasks)
 
 
 @server.tool()
@@ -119,10 +123,20 @@ def merge_all_pending(
 
 
 @server.tool()
-def get_logs(repo_root: str, task_id: str) -> dict[str, str]:
+def get_logs(repo_root: str, task_id: str) -> dict[str, Any]:
     """Read a Praetor task log."""
-    log_path = Path(repo_root) / ".praetor" / "logs" / f"{task_id}.log"
-    return {"task_id": task_id, "log": log_path.read_text() if log_path.exists() else ""}
+    root = Path(repo_root)
+    log_path = root / ".praetor" / "logs" / f"{task_id}.log"
+    review_failure = None
+    try:
+        review_failure = review_failure_for_task(root, state_get_task(root, task_id))
+    except KeyError:
+        pass
+    return {
+        "task_id": task_id,
+        "log": log_path.read_text() if log_path.exists() else "",
+        "review_failure": review_failure,
+    }
 
 
 @server.tool()

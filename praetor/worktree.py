@@ -95,6 +95,13 @@ def list_worktrees(repo_root: Path) -> list[Worktree]:
     return worktrees
 
 
+def get_worktree(task_id: str, repo_root: Path) -> Worktree | None:
+    for worktree in list_worktrees(repo_root):
+        if worktree.task_id == task_id:
+            return worktree
+    return None
+
+
 def remove_worktree(task_id: str, repo_root: Path, force: bool = False) -> None:
     repo_root = repo_root.resolve()
     worktree_path = _worktrees_dir(repo_root) / task_id

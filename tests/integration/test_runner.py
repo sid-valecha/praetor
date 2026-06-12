@@ -6,7 +6,7 @@ from praetor.frontmatter import dump_task
 from praetor.models import Task, TaskResult, TaskStatus
 from praetor.runner import drain_queue, run_once
 from praetor.run_history import latest_run
-from praetor.state import get_task, init_workspace
+from praetor.state import get_task, init_workspace, update_task_status
 
 
 class SequenceAdapter:
@@ -35,6 +35,40 @@ class ReviewRoutingAdapter:
 
     def for_review(self) -> "_ReviewOnlyAdapter":
         return self.review_adapter
+
+
+class RetryReviewAdapter:
+    name = "retry-executor"
+
+    def __init__(
+        self,
+        *,
+        executor_results: list[TaskResult],
+        review_results: list[TaskResult],
+    ) -> None:
+        self.executor_results = executor_results
+        self.review_results = review_results
+        self.executor_prompts: list[str] = []
+        self.review_prompts: list[str] = []
+        self.review_adapter = _RetryReviewOnlyAdapter(self)
+
+    def exec(self, prompt: str, cwd: Path, timeout_s: float | None = None) -> TaskResult:
+        self.executor_prompts.append(prompt)
+        return self.executor_results.pop(0)
+
+    def for_review(self) -> "_RetryReviewOnlyAdapter":
+        return self.review_adapter
+
+
+class _RetryReviewOnlyAdapter:
+    name = "retry-reviewer"
+
+    def __init__(self, parent: RetryReviewAdapter) -> None:
+        self.parent = parent
+
+    def exec(self, prompt: str, cwd: Path, timeout_s: float | None = None) -> TaskResult:
+        self.parent.review_prompts.append(prompt)
+        return self.parent.review_results.pop(0)
 
 
 class _ReviewOnlyAdapter:
@@ -230,11 +264,180 @@ def test_reviewer_needs_revision_marks_review_failed_without_blocking_dependents
         ]
     )
 
-    drain_queue(tmp_path, adapter)
+    drain_queue(tmp_path, adapter, max_review_retries=0)
 
     assert get_task(tmp_path, "A").status is TaskStatus.review_failed
     assert get_task(tmp_path, "B").status is TaskStatus.pending
     assert latest_run(tmp_path).task_runs[0].review.verdict == "needs_revision"
+
+
+def test_reviewer_needs_revision_retries_once_and_injects_feedback(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    write_task(tmp_path, make_task("A", verify="true", review="strict"))
+    adapter = RetryReviewAdapter(
+        executor_results=[
+            TaskResult(exit_code=0, stdout="first attempt\n", stderr="", duration_ms=1),
+            TaskResult(exit_code=0, stdout="second attempt\n", stderr="", duration_ms=1),
+        ],
+        review_results=[
+            _review_result(
+                "needs_revision",
+                severity="error",
+                summary="missing validation for empty input",
+                findings=[
+                    {
+                        "severity": "error",
+                        "file": "validator.py",
+                        "line": 12,
+                        "message": "empty input still passes",
+                        "recommendation": "reject empty input before saving",
+                    }
+                ],
+            ),
+            _review_result("pass", summary="fixed"),
+        ],
+    )
+
+    drain_queue(tmp_path, adapter)
+
+    task = get_task(tmp_path, "A")
+    assert task.status is TaskStatus.done
+    assert task.retry == 1
+    assert len(adapter.executor_prompts) == 2
+    retry_prompt = adapter.executor_prompts[1]
+    assert "Latest reviewer feedback" in retry_prompt
+    assert "verdict: needs_revision" in retry_prompt
+    assert "missing validation for empty input" in retry_prompt
+    assert "validator.py:12" in retry_prompt
+    assert "reject empty input before saving" in retry_prompt
+    assert "# Task A" in retry_prompt
+    assert "Verify command: true" in retry_prompt
+
+
+def test_manual_reset_after_pass_does_not_inject_resolved_review_feedback(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    write_task(tmp_path, make_task("A", verify="true", review="strict"))
+    first_adapter = RetryReviewAdapter(
+        executor_results=[
+            TaskResult(exit_code=0, stdout="first attempt\n", stderr="", duration_ms=1),
+            TaskResult(exit_code=0, stdout="second attempt\n", stderr="", duration_ms=1),
+        ],
+        review_results=[
+            _review_result(
+                "needs_revision",
+                summary="old criticism",
+                findings=[
+                    {
+                        "severity": "error",
+                        "message": "resolved problem",
+                        "recommendation": "old recommendation",
+                    }
+                ],
+            ),
+            _review_result("pass", summary="fixed"),
+        ],
+    )
+    drain_queue(tmp_path, first_adapter)
+    assert get_task(tmp_path, "A").status is TaskStatus.done
+
+    update_task_status(tmp_path, "A", TaskStatus.pending)
+    second_adapter = RetryReviewAdapter(
+        executor_results=[
+            TaskResult(exit_code=0, stdout="fresh attempt\n", stderr="", duration_ms=1),
+        ],
+        review_results=[
+            _review_result("pass", summary="fresh pass"),
+        ],
+    )
+    drain_queue(tmp_path, second_adapter)
+
+    assert get_task(tmp_path, "A").status is TaskStatus.done
+    prompt = second_adapter.executor_prompts[0]
+    assert "Latest reviewer feedback" not in prompt
+    assert "old criticism" not in prompt
+    assert "old recommendation" not in prompt
+
+
+def test_reviewer_retry_exhaustion_leaves_review_failed_with_retry_count(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    write_task(tmp_path, make_task("A", verify="true", review="strict"))
+    adapter = RetryReviewAdapter(
+        executor_results=[
+            TaskResult(exit_code=0, stdout="first attempt\n", stderr="", duration_ms=1),
+            TaskResult(exit_code=0, stdout="second attempt\n", stderr="", duration_ms=1),
+        ],
+        review_results=[
+            _review_result("needs_revision", summary="first rejection"),
+            _review_result("needs_revision", summary="still broken"),
+        ],
+    )
+
+    drain_queue(tmp_path, adapter)
+
+    task = get_task(tmp_path, "A")
+    assert task.status is TaskStatus.review_failed
+    assert task.retry == 1
+    run = latest_run(tmp_path)
+    assert [task_run.status for task_run in run.task_runs] == ["pending", "review_failed"]
+    assert run.task_runs[-1].review.summary == "still broken"
+    log_text = (tmp_path / ".praetor" / "logs" / "A.log").read_text()
+    assert "still broken" in log_text
+
+
+def test_max_review_retries_zero_disables_automatic_review_retry(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    write_task(tmp_path, make_task("A", verify="true", review="strict"))
+    adapter = RetryReviewAdapter(
+        executor_results=[
+            TaskResult(exit_code=0, stdout="first attempt\n", stderr="", duration_ms=1),
+        ],
+        review_results=[
+            _review_result("needs_revision", summary="do not retry"),
+        ],
+    )
+
+    drain_queue(tmp_path, adapter, max_review_retries=0)
+
+    task = get_task(tmp_path, "A")
+    assert task.status is TaskStatus.review_failed
+    assert task.retry == 0
+    assert len(adapter.executor_prompts) == 1
+
+
+def test_review_retry_respects_max_iterations(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+    write_task(tmp_path, make_task("A", verify="true", review="strict"))
+    adapter = RetryReviewAdapter(
+        executor_results=[
+            TaskResult(exit_code=0, stdout="first attempt\n", stderr="", duration_ms=1),
+            TaskResult(exit_code=0, stdout="second attempt\n", stderr="", duration_ms=1),
+        ],
+        review_results=[
+            _review_result("needs_revision", summary="retry later"),
+            _review_result("pass", summary="fixed later"),
+        ],
+    )
+
+    drain_queue(tmp_path, adapter, max_iterations=1)
+
+    task = get_task(tmp_path, "A")
+    assert task.status is TaskStatus.pending
+    assert task.retry == 1
+    assert len(adapter.executor_prompts) == 1
+    assert latest_run(tmp_path).status == "stopped"
+
+    drain_queue(tmp_path, adapter, max_iterations=2)
+
+    assert get_task(tmp_path, "A").status is TaskStatus.done
+    assert len(adapter.executor_prompts) == 2
 
 
 def test_reviewer_blocked_marks_blocked_and_propagates(tmp_path: Path) -> None:
@@ -266,15 +469,26 @@ def test_max_iterations_stops_dispatching_new_tasks(tmp_path: Path) -> None:
     assert latest_run(tmp_path).status == "stopped"
 
 
-def _review_result(verdict: str) -> TaskResult:
+def _review_result(
+    verdict: str,
+    *,
+    severity: str = "info",
+    summary: str = "review summary",
+    findings: list[dict[str, object]] | None = None,
+) -> TaskResult:
+    findings_json = "[]"
+    if findings is not None:
+        import json
+
+        findings_json = json.dumps(findings)
     return TaskResult(
         exit_code=0,
         stdout=(
             "{"
             f'"verdict": "{verdict}", '
-            '"severity": "info", '
-            '"summary": "review summary", '
-            '"findings": []'
+            f'"severity": "{severity}", '
+            f'"summary": "{summary}", '
+            f'"findings": {findings_json}'
             "}"
         ),
         stderr="",
