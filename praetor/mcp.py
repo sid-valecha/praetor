@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Any
 
 from praetor._mcp_sdk import FastMCP
+from praetor.adapters import resolve_reviewer_adapter
 from praetor.adapters.claude import ClaudeCodeAdapter
 from praetor.dag import compute_ready_set
 from praetor.merge_queue import merge_all_pending as merge_all_pending_core
@@ -83,8 +84,19 @@ def start_drain(
     max_review_retries: int | None = None,
     model: str | None = None,
     effort: str | None = None,
+    reviewer_adapter: str | None = None,
+    reviewer_model: str | None = None,
+    reviewer_effort: str | None = None,
 ) -> dict[str, str]:
     """Drain ready Praetor tasks using Claude Code."""
+    review_adapter = resolve_reviewer_adapter(
+        executor_adapter="claude",
+        executor_model=model,
+        executor_effort=effort,
+        reviewer_adapter=reviewer_adapter,
+        reviewer_model=reviewer_model,
+        reviewer_effort=reviewer_effort,
+    )
     drain_queue(
         Path(repo_root),
         ClaudeCodeAdapter(model=model, effort=effort),
@@ -94,6 +106,7 @@ def start_drain(
         max_iterations=max_iterations,
         max_runtime_s=max_runtime_s,
         max_review_retries=max_review_retries,
+        reviewer_adapter=review_adapter,
     )
     return {"status": "completed"}
 

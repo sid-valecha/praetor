@@ -95,6 +95,7 @@ def run_once(
     on_event: EventCallback | None = None,
     recorder: RunRecorder | None = None,
     max_review_retries: int = 0,
+    reviewer_adapter: AgentAdapter | None = None,
 ) -> bool:
     ready_tasks = compute_ready_set(list_tasks(repo_root))
     if not ready_tasks:
@@ -103,7 +104,13 @@ def run_once(
     task = ready_tasks[0]
     update_task_status(repo_root, task.id, TaskStatus.running)
     if recorder is not None:
-        recorder.start_task(task.id, adapter=adapter.name, verify_command=task.verify)
+        recorder.start_task(
+            task.id,
+            adapter=adapter.name,
+            verify_command=task.verify,
+            executor_model=getattr(adapter, "model", None),
+            executor_effort=getattr(adapter, "effort", None),
+        )
 
     try:
         context_path = repo_root / ".praetor" / "context.md"
@@ -152,6 +159,7 @@ def run_once(
             recorder=recorder,
             on_event=on_event,
             max_review_retries=max_review_retries,
+            reviewer_adapter=reviewer_adapter,
         )
         if review_result is not None and review_result.verdict != "pass":
             return True
@@ -202,6 +210,7 @@ def run_once(
         recorder=recorder,
         on_event=on_event,
         max_review_retries=max_review_retries,
+        reviewer_adapter=reviewer_adapter,
     )
     if review_result is not None and review_result.verdict != "pass":
         return True
@@ -229,6 +238,7 @@ def drain_queue(
     max_iterations: int | None = None,
     max_runtime_s: float | None = None,
     max_review_retries: int | None = None,
+    reviewer_adapter: AgentAdapter | None = None,
 ) -> None:
     _raise_on_stale_running(list_tasks(repo_root))
     resolved_max_review_retries = resolve_max_review_retries(repo_root, max_review_retries)
@@ -265,6 +275,7 @@ def drain_queue(
                     on_event=on_event,
                     recorder=recorder,
                     max_review_retries=resolved_max_review_retries,
+                    reviewer_adapter=reviewer_adapter,
                 ):
                     break
                 guardrails.consume_iteration()
@@ -280,6 +291,7 @@ def drain_queue(
             recorder,
             guardrails,
             resolved_max_review_retries,
+            reviewer_adapter,
         )
     except Exception:
         run_status = "failed"
@@ -301,6 +313,7 @@ def _drain_parallel(
     recorder: RunRecorder,
     guardrails: DrainGuardrails,
     max_review_retries: int,
+    reviewer_adapter: AgentAdapter | None,
 ) -> None:
     in_flight: dict[Future[TaskResult], RunningTask] = {}
 
@@ -333,6 +346,7 @@ def _drain_parallel(
                     on_event,
                     recorder,
                     max_review_retries,
+                    reviewer_adapter,
                 )
 
 
@@ -409,13 +423,25 @@ def _submit_parallel_task(
     except WorktreeError as exc:
         _write_task_log(repo_root, task.id, f"Worktree collision for {task.id}: {exc}\n")
         _mark_failed_and_propagate(repo_root, task.id)
-        recorder.start_task(task.id, adapter=adapter.name, verify_command=task.verify)
+        recorder.start_task(
+            task.id,
+            adapter=adapter.name,
+            verify_command=task.verify,
+            executor_model=getattr(adapter, "model", None),
+            executor_effort=getattr(adapter, "effort", None),
+        )
         recorder.finish_task(task.id, status="failed", detail="worktree setup failed")
         _emit(on_event, "task_failed", task_id=task.id, detail="worktree setup failed")
         return True
 
     update_task_status(repo_root, task.id, TaskStatus.running)
-    recorder.start_task(task.id, adapter=adapter.name, verify_command=task.verify)
+    recorder.start_task(
+        task.id,
+        adapter=adapter.name,
+        verify_command=task.verify,
+        executor_model=getattr(adapter, "model", None),
+        executor_effort=getattr(adapter, "effort", None),
+    )
     guardrails.consume_iteration()
     context_path = repo_root / ".praetor" / "context.md"
     context = context_path.read_text() if context_path.exists() else ""
@@ -439,6 +465,7 @@ def _complete_parallel_task(
     on_event: EventCallback | None,
     recorder: RunRecorder,
     max_review_retries: int,
+    reviewer_adapter: AgentAdapter | None,
 ) -> None:
     task = running_task.task
     try:
@@ -501,6 +528,7 @@ def _complete_parallel_task(
         recorder=recorder,
         on_event=on_event,
         max_review_retries=max_review_retries,
+        reviewer_adapter=reviewer_adapter,
     )
     if review_result is not None and review_result.verdict != "pass":
         return
@@ -610,12 +638,13 @@ def _review_if_needed(
     recorder: RunRecorder | None,
     on_event: EventCallback | None,
     max_review_retries: int,
+    reviewer_adapter: AgentAdapter | None,
 ) -> ReviewResult | None:
     if task.review == "off":
         return None
 
     _emit(on_event, "task_review_started", task_id=task.id)
-    review_adapter = _review_adapter(adapter)
+    review_adapter = _review_adapter(adapter, reviewer_adapter)
     review = run_task_review(
         task,
         review_adapter,
@@ -725,10 +754,14 @@ def _run_git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
         )
 
 
-def _review_adapter(adapter: AgentAdapter) -> AgentAdapter:
-    factory = getattr(adapter, "for_review", None)
+def _review_adapter(
+    adapter: AgentAdapter,
+    explicit_reviewer_adapter: AgentAdapter | None = None,
+) -> AgentAdapter:
+    selected_adapter = explicit_reviewer_adapter or adapter
+    factory = getattr(selected_adapter, "for_review", None)
     if not callable(factory):
-        return adapter
+        return selected_adapter
     review_adapter = factory()
     return review_adapter
 

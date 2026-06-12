@@ -36,6 +36,7 @@ class LoopOptions:
     max_iterations: int | None = None
     max_runtime_s: float | None = None
     max_review_retries: int | None = None
+    reviewer_adapter: AgentAdapter | None = None
 
 
 class TaskFileHandler(FileSystemEventHandler):
@@ -116,6 +117,7 @@ def _drain_and_log(
         max_iterations=options.max_iterations,
         max_runtime_s=options.max_runtime_s,
         max_review_retries=options.max_review_retries,
+        reviewer_adapter=options.reviewer_adapter,
     )
     completed_count = len(_successful_task_ids(repo_root) - before_successful)
     if options.max_parallel == 1:

@@ -100,6 +100,50 @@ def test_loop_passes_model_and_effort_to_adapter_factory(tmp_path: Path, monkeyp
     assert captured == {"adapter": "claude", "model": "haiku", "effort": "low"}
 
 
+def test_loop_passes_reviewer_adapter_through_options(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    captured: dict[str, object] = {}
+
+    def fake_loop_queue(
+        repo_root: Path, adapter: object, options: object, **kwargs: object
+    ) -> None:
+        captured["repo_root"] = repo_root
+        captured["adapter"] = adapter
+        captured["options"] = options
+        captured.update(kwargs)
+
+    monkeypatch.setattr("praetor.commands.loop.loop_queue", fake_loop_queue)
+
+    result = runner.invoke(
+        app,
+        [
+            "loop",
+            "--once",
+            "--adapter",
+            "claude",
+            "--model",
+            "haiku",
+            "--effort",
+            "low",
+            "--reviewer-model",
+            "opus",
+            "--reviewer-effort",
+            "high",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert getattr(captured["adapter"], "model") == "haiku"
+    assert getattr(captured["adapter"], "effort") == "low"
+    reviewer = captured["options"].reviewer_adapter
+    assert getattr(reviewer, "model") == "opus"
+    assert getattr(reviewer, "effort") == "high"
+
+
 def test_loop_rejects_invalid_max_review_retries(tmp_path: Path, monkeypatch) -> None:
     init_workspace(tmp_path)
     monkeypatch.chdir(tmp_path)

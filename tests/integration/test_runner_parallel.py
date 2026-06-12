@@ -48,6 +48,20 @@ class FileEditingAdapter(SleepRecordingAdapter):
         return super().exec(prompt, cwd, timeout_s)
 
 
+class RecordingReviewAdapter:
+    name = "explicit-reviewer"
+
+    def __init__(self, result: TaskResult) -> None:
+        self.result = result
+        self.prompts: list[str] = []
+        self.cwd_records: list[Path] = []
+
+    def exec(self, prompt: str, cwd: Path, timeout_s: float | None = None) -> TaskResult:
+        self.prompts.append(prompt)
+        self.cwd_records.append(cwd)
+        return self.result
+
+
 class ReviewRejectingFileEditingAdapter(FileEditingAdapter):
     def exec(self, prompt: str, cwd: Path, timeout_s: float | None = None) -> TaskResult:
         if prompt.startswith("You are the Praetor task reviewer."):
@@ -458,6 +472,18 @@ def test_pending_merge_blocks_dependent_task(scratch_repo: Path) -> None:
 
     assert get_task(scratch_repo, "parent").status is TaskStatus.pending_merge
     assert get_task(scratch_repo, "child").status is TaskStatus.pending
+
+
+def test_parallel_review_uses_explicit_reviewer_in_task_worktree(scratch_repo: Path) -> None:
+    _write_task(scratch_repo, _make_task("task-a", offset=0, review="strict"))
+    executor = FileEditingAdapter({"task-a": {"work.txt": "task a\n"}})
+    reviewer = RecordingReviewAdapter(_review_result("pass"))
+
+    drain_queue(scratch_repo, executor, max_parallel=2, reviewer_adapter=reviewer)
+
+    assert get_task(scratch_repo, "task-a").status is TaskStatus.pending_merge
+    assert len(reviewer.prompts) == 1
+    assert reviewer.cwd_records == [scratch_repo / ".praetor" / "worktrees" / "task-a"]
 
 
 def _write_three_tasks(repo_root: Path) -> None:

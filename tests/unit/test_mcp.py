@@ -244,6 +244,35 @@ def test_start_drain_passes_max_review_retries_to_drain_queue(
     assert captured["max_review_retries"] == 2
 
 
+def test_start_drain_passes_reviewer_adapter_to_drain_queue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_drain_queue(repo_root: Path, adapter: object, **kwargs: object) -> None:
+        captured["repo_root"] = repo_root
+        captured["adapter"] = adapter
+        captured.update(kwargs)
+
+    monkeypatch.setattr("praetor.mcp.drain_queue", fake_drain_queue)
+
+    result = start_drain(
+        str(tmp_path),
+        model="haiku",
+        effort="low",
+        reviewer_model="opus",
+        reviewer_effort="high",
+    )
+
+    assert result == {"status": "completed"}
+    assert getattr(captured["adapter"], "model") == "haiku"
+    assert getattr(captured["adapter"], "effort") == "low"
+    reviewer = captured["reviewer_adapter"]
+    assert getattr(reviewer, "model") == "opus"
+    assert getattr(reviewer, "effort") == "high"
+
+
 def _make_task(
     task_id: str,
     status: TaskStatus,

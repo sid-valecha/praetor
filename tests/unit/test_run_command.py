@@ -128,3 +128,40 @@ def test_run_passes_model_and_effort_to_adapter_factory(tmp_path: Path, monkeypa
 
     assert result.exit_code == 0
     assert captured == {"adapter": "claude", "model": "haiku", "effort": "low"}
+
+
+def test_run_passes_reviewer_adapter_to_drain_queue(tmp_path: Path, monkeypatch) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    captured: dict[str, object] = {}
+
+    def fake_drain_queue(repo_root: Path, adapter: object, **kwargs: object) -> None:
+        captured["repo_root"] = repo_root
+        captured["adapter"] = adapter
+        captured.update(kwargs)
+
+    monkeypatch.setattr("praetor.commands.run.drain_queue", fake_drain_queue)
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--adapter",
+            "claude",
+            "--model",
+            "haiku",
+            "--effort",
+            "low",
+            "--reviewer-model",
+            "opus",
+            "--reviewer-effort",
+            "high",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert getattr(captured["adapter"], "model") == "haiku"
+    assert getattr(captured["adapter"], "effort") == "low"
+    reviewer = captured["reviewer_adapter"]
+    assert getattr(reviewer, "model") == "opus"
+    assert getattr(reviewer, "effort") == "high"

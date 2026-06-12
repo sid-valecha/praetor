@@ -191,11 +191,12 @@ Ship as plain markdown in `skills/`. Claude Code picks them up when the plugin i
 - Stop cleanly once the retry budget is exhausted and leave the task in `review_failed` with findings intact
 
 **v1.3 — Cross-model trust gate**
-- Real Codex adapter, probably Aider after that
-- Per-task agent selection via existing `agent:` field
 - Add reviewer selection at run time: `--reviewer-adapter`, `--reviewer-model`, `--reviewer-effort`
-- Default reviewer remains same adapter/model/effort as executor
-- Strong path: Claude implements and Codex reviews, or Codex implements and Claude reviews
+- Default reviewer remains same adapter/model/effort as executor unless reviewer options are supplied
+- Codex-as-reviewer comes before Codex-as-executor
+- Real Codex executor adapter comes later, after sandbox/worktree behavior is proven
+- Per-task agent selection via existing `agent:` field remains a later runtime-routing step
+- Strong path: Claude implements and Codex reviews first; Codex execution comes after reviewer routing is proven
 - Preserve maker/checker separation in run history so users can audit which agent wrote and which agent reviewed
 
 **v1.4 — Memory compounding**

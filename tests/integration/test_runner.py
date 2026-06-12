@@ -272,6 +272,45 @@ def test_reviewer_uses_review_adapter_when_available(tmp_path: Path) -> None:
     assert run.task_runs[0].review.reviewer_adapter == "reviewer"
 
 
+def test_explicit_reviewer_adapter_overrides_executor_review_adapter(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+    write_task(tmp_path, make_task("A", verify="true", review="strict"))
+    executor = ReviewRoutingAdapter()
+    reviewer = SequenceAdapter([_review_result("pass")])
+
+    drain_queue(tmp_path, executor, reviewer_adapter=reviewer)
+
+    assert get_task(tmp_path, "A").status is TaskStatus.done
+    assert len(executor.executor_prompts) == 1
+    assert executor.review_prompts == []
+    assert len(reviewer.prompts) == 1
+    run = latest_run(tmp_path)
+    assert run.task_runs[0].adapter == "executor"
+    assert run.task_runs[0].review.reviewer_adapter == "sequence"
+
+
+def test_run_history_records_executor_and_reviewer_model_metadata(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+    write_task(tmp_path, make_task("A", verify="true", review="strict"))
+    executor = SequenceAdapter(
+        [TaskResult(exit_code=0, stdout="implemented\n", stderr="", duration_ms=1)]
+    )
+    executor.model = "exec-model"
+    executor.effort = "exec-effort"
+    reviewer = SequenceAdapter([_review_result("pass")])
+    reviewer.model = "review-model"
+    reviewer.effort = "review-effort"
+
+    drain_queue(tmp_path, executor, reviewer_adapter=reviewer)
+
+    run = latest_run(tmp_path)
+    task_run = run.task_runs[0]
+    assert task_run.executor_model == "exec-model"
+    assert task_run.executor_effort == "exec-effort"
+    assert task_run.review.reviewer_model == "review-model"
+    assert task_run.review.reviewer_effort == "review-effort"
+
+
 def test_reviewer_needs_revision_marks_review_failed_without_blocking_dependents(
     tmp_path: Path,
 ) -> None:

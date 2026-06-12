@@ -35,6 +35,31 @@ def test_run_recorder_writes_and_loads_run(tmp_path: Path) -> None:
     assert loaded.max_review_retries == 1
 
 
+def test_run_recorder_writes_executor_model_metadata(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+    recorder = RunRecorder(
+        tmp_path,
+        max_parallel=1,
+        base_branch="main",
+        merge_strategy=None,
+        max_review_retries=1,
+    )
+
+    recorder.start_task(
+        "task-a",
+        adapter="claude",
+        verify_command="true",
+        executor_model="haiku",
+        executor_effort="low",
+    )
+    recorder.finish_task("task-a", status="done")
+
+    loaded = load_run(recorder.path)
+
+    assert loaded.task_runs[0].executor_model == "haiku"
+    assert loaded.task_runs[0].executor_effort == "low"
+
+
 def test_latest_run_returns_newest_run(tmp_path: Path) -> None:
     init_workspace(tmp_path)
     RunRecorder(
@@ -75,3 +100,36 @@ def test_load_run_defaults_max_review_retries_for_older_records(tmp_path: Path) 
     loaded = load_run(path)
 
     assert loaded.max_review_retries == DEFAULT_MAX_REVIEW_RETRIES
+    assert loaded.task_runs == []
+
+
+def test_load_run_defaults_executor_metadata_for_older_task_records(tmp_path: Path) -> None:
+    path = tmp_path / "run.json"
+    path.write_text(
+        """
+{
+  "id": "older-run",
+  "status": "completed",
+  "started_at": "2026-06-12T12:00:00Z",
+  "finished_at": "2026-06-12T12:01:00Z",
+  "max_parallel": 1,
+  "base_branch": "main",
+  "merge_strategy": null,
+  "task_runs": [
+    {
+      "task_id": "task-a",
+      "status": "done",
+      "started_at": "2026-06-12T12:00:10Z",
+      "finished_at": "2026-06-12T12:00:20Z",
+      "adapter": "mock",
+      "verify_command": "true"
+    }
+  ]
+}
+""".strip()
+    )
+
+    loaded = load_run(path)
+
+    assert loaded.task_runs[0].executor_model is None
+    assert loaded.task_runs[0].executor_effort is None
