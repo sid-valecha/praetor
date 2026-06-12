@@ -70,7 +70,14 @@ def render_task_prompt(
     context: str = "",
     review_failure: dict | None = None,
 ) -> str:
-    parts = []
+    parts = [
+        (
+            "Praetor runs are non-interactive. You are authorized to make the "
+            "scoped edits needed for this task. Do not ask for permission before "
+            "normal in-scope file changes; ask only if the task requires "
+            "destructive or out-of-scope work."
+        )
+    ]
     if context:
         parts.append(context.strip())
     if review_failure is not None:

@@ -4,7 +4,7 @@ from pathlib import Path
 from praetor.adapters import MockAdapter
 from praetor.frontmatter import dump_task
 from praetor.models import Task, TaskResult, TaskStatus
-from praetor.runner import drain_queue, run_once
+from praetor.runner import drain_queue, render_task_prompt, run_once
 from praetor.run_history import latest_run
 from praetor.state import get_task, init_workspace, update_task_status
 
@@ -110,6 +110,27 @@ def test_run_once_returns_false_on_empty_queue(tmp_path: Path) -> None:
     init_workspace(tmp_path)
 
     assert run_once(tmp_path, MockAdapter()) is False
+
+
+def test_render_task_prompt_includes_non_interactive_edit_authority() -> None:
+    task = make_task("A")
+    task.body = "# Update docs\n\nEdit Handoff.md."
+
+    prompt = render_task_prompt(
+        task,
+        context="Project context.",
+        review_failure={
+            "verdict": "needs_revision",
+            "severity": "error",
+            "summary": "Docs were not edited.",
+            "findings": [],
+        },
+    )
+
+    authority = "Praetor runs are non-interactive."
+    assert authority in prompt
+    assert prompt.index(authority) < prompt.index("Latest reviewer feedback")
+    assert prompt.index(authority) < prompt.index("# Update docs")
 
 
 def test_run_once_processes_one_task(tmp_path: Path) -> None:

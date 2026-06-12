@@ -69,6 +69,8 @@ Every task body must contain exactly these operational sections:
 
 The `## What to do` section is a prompt, not a product spec. It should tell the implementer which files to inspect or change, constraints to respect, and the intended outcome.
 
+Praetor runs implementers non-interactively. Write tasks as if the implementer already has permission to make the scoped edits in the task. Do not ask the agent to confirm before normal in-scope changes; tell it to ask only when the work would be destructive or outside the stated scope.
+
 ## Verify Commands
 
 The `verify` field must be a shell command that exits 0 on success and non-zero on failure.
@@ -79,6 +81,7 @@ Good patterns:
 - `cargo test -p billing`
 - `npm test -- --run auth`
 - `go test ./internal/webhook`
+- docs/content checks such as `grep -q "Phase 27 dogfood" Handoff.md && grep -q "3dbad8a" Handoff.md`
 
 Bad patterns:
 - `manual check in browser`
@@ -86,6 +89,7 @@ Bad patterns:
 - `pytest maybe`
 - `ask the user to verify`
 - commands so broad they hide the intended proof, such as full monorepo tests for a one-file copy change
+- unrelated tests for docs-only edits; make the command check the required text or rendered output
 
 If no automated verification exists yet, the task should usually include creating a focused test and then set `verify` to that test command.
 
