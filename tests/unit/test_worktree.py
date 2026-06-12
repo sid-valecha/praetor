@@ -5,6 +5,7 @@ import subprocess
 
 import pytest
 
+from praetor import worktree as worktree_module
 from praetor.worktree import WorktreeError, create_worktree, list_worktrees, remove_worktree
 
 
@@ -74,6 +75,23 @@ def test_list_worktrees_after_create(scratch_repo: Path) -> None:
     assert {worktree.task_id for worktree in worktrees} == {"a", "b"}
     assert len(worktrees) == 2
     assert all(re.fullmatch(r"[0-9a-f]{40}", worktree.base_sha) for worktree in worktrees)
+
+
+def test_get_worktree_returns_metadata_backed_worktree(scratch_repo: Path) -> None:
+    created = create_worktree("task-a", scratch_repo)
+
+    worktree = worktree_module.get_worktree("task-a", scratch_repo)
+
+    assert worktree == created
+
+
+def test_get_worktree_ignores_corrupt_worktree_without_metadata(
+    scratch_repo: Path,
+) -> None:
+    created = create_worktree("task-a", scratch_repo)
+    (created.path / ".praetor-meta.json").unlink()
+
+    assert worktree_module.get_worktree("task-a", scratch_repo) is None
 
 
 def test_list_worktrees_uses_sidecar_not_head(scratch_repo: Path) -> None:

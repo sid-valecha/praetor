@@ -1,3 +1,5 @@
+import json
+import os
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -35,6 +37,8 @@ REQUIRED_TASK_KEYS = {
     "context_files",
     "created",
     "ready",
+    "review_failure",
+    "waiting_on",
 }
 
 
@@ -66,8 +70,34 @@ def test_get_task_returns_single_task_or_keyerror(tmp_path: Path) -> None:
 
     assert task["id"] == "task-a"
     assert "ready" not in task
+    assert task["review_failure"] is None
+    assert task["waiting_on"] == []
     with pytest.raises(KeyError, match="Task not found: missing"):
         mcp_get_task(str(tmp_path), "missing")
+
+
+def test_mcp_tasks_expose_review_failure_and_waiting_on(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+    _write_task(tmp_path, _make_task("task-a", TaskStatus.review_failed))
+    _write_task(
+        tmp_path,
+        _make_task("task-b", TaskStatus.pending, offset=1, depends_on=["task-a"]),
+    )
+    _write_run(tmp_path, "older-run", "task-a")
+
+    listed = {task["id"]: task for task in mcp_list_tasks(str(tmp_path))}
+    fetched = mcp_get_task(str(tmp_path), "task-a")
+
+    assert listed["task-a"]["review_failure"]["summary"] == "Unsafe validation change."
+    assert fetched["review_failure"]["run_id"] == "older-run"
+    assert listed["task-b"]["waiting_on"] == [
+        {
+            "task_id": "task-a",
+            "status": "review_failed",
+            "reason": "dependency_review_failed",
+            "review_summary": "Unsafe validation change.",
+        }
+    ]
 
 
 def test_next_ready_returns_ready_ids(tmp_path: Path) -> None:
@@ -140,7 +170,24 @@ def test_merge_all_pending_returns_structured_results(tmp_path: Path) -> None:
 def test_get_logs_returns_empty_for_missing_log(tmp_path: Path) -> None:
     init_workspace(tmp_path)
 
-    assert get_logs(str(tmp_path), "task-a") == {"task_id": "task-a", "log": ""}
+    assert get_logs(str(tmp_path), "task-a") == {
+        "task_id": "task-a",
+        "log": "",
+        "review_failure": None,
+    }
+
+
+def test_get_logs_exposes_review_failure_for_review_failed_task(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+    _write_task(tmp_path, _make_task("task-a", TaskStatus.review_failed))
+    _write_run(tmp_path, "older-run", "task-a")
+    (tmp_path / ".praetor" / "logs" / "task-a.log").write_text("raw log\n")
+
+    result = get_logs(str(tmp_path), "task-a")
+
+    assert result["task_id"] == "task-a"
+    assert result["log"] == "raw log\n"
+    assert result["review_failure"]["summary"] == "Unsafe validation change."
 
 
 def test_get_latest_run_returns_none_when_missing(tmp_path: Path) -> None:
@@ -215,6 +262,58 @@ def _make_task(
 
 def _write_task(repo_root: Path, task: Task) -> None:
     dump_task(task, repo_root / ".praetor" / "tasks" / f"{task.id}.md")
+
+
+def _write_run(repo_root: Path, run_id: str, task_id: str) -> None:
+    path = repo_root / ".praetor" / "runs" / f"{run_id}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "id": run_id,
+                "status": "completed",
+                "started_at": "2026-06-12T12:00:00Z",
+                "finished_at": "2026-06-12T12:01:00Z",
+                "max_parallel": 1,
+                "base_branch": "main",
+                "merge_strategy": None,
+                "max_review_retries": 1,
+                "task_runs": [
+                    {
+                        "task_id": task_id,
+                        "status": "review_failed",
+                        "started_at": "2026-06-12T12:00:10Z",
+                        "finished_at": "2026-06-12T12:00:20Z",
+                        "adapter": "mock",
+                        "verify_command": "pytest",
+                        "agent_exit_code": 0,
+                        "verify_exit_code": 0,
+                        "merge_status": None,
+                        "detail": "review needs revision",
+                        "review": {
+                            "verdict": "needs_revision",
+                            "severity": "error",
+                            "summary": "Unsafe validation change.",
+                            "findings": [
+                                {
+                                    "severity": "error",
+                                    "file": "src/app.py",
+                                    "line": 12,
+                                    "message": "Input validation can be bypassed.",
+                                    "recommendation": "Validate before writing.",
+                                }
+                            ],
+                            "reviewer_adapter": "mock-reviewer",
+                            "started_at": "2026-06-12T12:00:15Z",
+                            "finished_at": "2026-06-12T12:00:18Z",
+                            "duration_ms": 3000,
+                        },
+                    }
+                ],
+            }
+        )
+    )
+    os.utime(path, (100, 100))
 
 
 def _init_git_repo(repo_root: Path) -> None:

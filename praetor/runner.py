@@ -16,10 +16,11 @@ from praetor.events import EventCallback, EventType, RunnerEvent
 from praetor.merge_queue import merge_one_task
 from praetor.models import AgentAdapter, ReviewResult, Task, TaskResult, TaskStatus
 from praetor.pool import WorkerPool
+from praetor.recovery import format_review_failure_for_prompt, latest_review_failure
 from praetor.review import format_review_for_log, run_task_review
 from praetor.run_history import RunRecorder
-from praetor.state import list_tasks, update_task_status
-from praetor.worktree import Worktree, WorktreeError, create_worktree
+from praetor.state import list_tasks, update_task, update_task_status
+from praetor.worktree import Worktree, WorktreeError, create_worktree, get_worktree
 
 
 class StaleRunningError(RuntimeError):
@@ -64,10 +65,16 @@ class DrainGuardrails:
         return not self.can_start_task()
 
 
-def render_task_prompt(task: Task, context: str = "") -> str:
+def render_task_prompt(
+    task: Task,
+    context: str = "",
+    review_failure: dict | None = None,
+) -> str:
     parts = []
     if context:
         parts.append(context.strip())
+    if review_failure is not None:
+        parts.append(format_review_failure_for_prompt(review_failure))
     if task.body:
         parts.append(task.body.strip())
     if task.verify is not None:
@@ -80,6 +87,7 @@ def run_once(
     adapter: AgentAdapter,
     on_event: EventCallback | None = None,
     recorder: RunRecorder | None = None,
+    max_review_retries: int = 0,
 ) -> bool:
     ready_tasks = compute_ready_set(list_tasks(repo_root))
     if not ready_tasks:
@@ -93,7 +101,11 @@ def run_once(
     try:
         context_path = repo_root / ".praetor" / "context.md"
         context = context_path.read_text() if context_path.exists() else ""
-        prompt = render_task_prompt(task, context)
+        prompt = render_task_prompt(
+            task,
+            context,
+            review_failure=latest_review_failure(repo_root, task.id),
+        )
         _emit(on_event, "task_dispatched", task_id=task.id)
         result = adapter.exec(prompt, cwd=repo_root)
     except Exception:
@@ -132,6 +144,7 @@ def run_once(
             verify_exit_code=verify_exit_code,
             recorder=recorder,
             on_event=on_event,
+            max_review_retries=max_review_retries,
         )
         if review_result is not None and review_result.verdict != "pass":
             return True
@@ -181,6 +194,7 @@ def run_once(
         verify_exit_code=verify_exit_code,
         recorder=recorder,
         on_event=on_event,
+        max_review_retries=max_review_retries,
     )
     if review_result is not None and review_result.verdict != "pass":
         return True
@@ -238,7 +252,13 @@ def drain_queue(
     try:
         if max_parallel == 1:
             while guardrails.can_start_task():
-                if not run_once(repo_root, adapter, on_event=on_event, recorder=recorder):
+                if not run_once(
+                    repo_root,
+                    adapter,
+                    on_event=on_event,
+                    recorder=recorder,
+                    max_review_retries=resolved_max_review_retries,
+                ):
                     break
                 guardrails.consume_iteration()
             return
@@ -252,6 +272,7 @@ def drain_queue(
             on_event,
             recorder,
             guardrails,
+            resolved_max_review_retries,
         )
     except Exception:
         run_status = "failed"
@@ -272,6 +293,7 @@ def _drain_parallel(
     on_event: EventCallback | None,
     recorder: RunRecorder,
     guardrails: DrainGuardrails,
+    max_review_retries: int,
 ) -> None:
     in_flight: dict[Future[TaskResult], RunningTask] = {}
 
@@ -303,6 +325,7 @@ def _drain_parallel(
                     merge_strategy,
                     on_event,
                     recorder,
+                    max_review_retries,
                 )
 
 
@@ -375,7 +398,7 @@ def _submit_parallel_task(
     guardrails: DrainGuardrails,
 ) -> bool:
     try:
-        worktree = create_worktree(task.id, repo_root, base_branch=base_branch)
+        worktree = _worktree_for_parallel_task(task, repo_root, base_branch)
     except WorktreeError as exc:
         _write_task_log(repo_root, task.id, f"Worktree collision for {task.id}: {exc}\n")
         _mark_failed_and_propagate(repo_root, task.id)
@@ -389,7 +412,11 @@ def _submit_parallel_task(
     guardrails.consume_iteration()
     context_path = repo_root / ".praetor" / "context.md"
     context = context_path.read_text() if context_path.exists() else ""
-    prompt = render_task_prompt(task, context)
+    prompt = render_task_prompt(
+        task,
+        context,
+        review_failure=latest_review_failure(repo_root, task.id),
+    )
     _emit(on_event, "task_dispatched", task_id=task.id)
     future = pool.submit(adapter, prompt, worktree.path)
     in_flight[future] = RunningTask(task=task, worktree=worktree)
@@ -404,6 +431,7 @@ def _complete_parallel_task(
     run_merge_strategy_override: str | None,
     on_event: EventCallback | None,
     recorder: RunRecorder,
+    max_review_retries: int,
 ) -> None:
     task = running_task.task
     try:
@@ -465,6 +493,7 @@ def _complete_parallel_task(
         verify_exit_code=verify_exit_code,
         recorder=recorder,
         on_event=on_event,
+        max_review_retries=max_review_retries,
     )
     if review_result is not None and review_result.verdict != "pass":
         return
@@ -573,6 +602,7 @@ def _review_if_needed(
     verify_exit_code: int | None,
     recorder: RunRecorder | None,
     on_event: EventCallback | None,
+    max_review_retries: int,
 ) -> ReviewResult | None:
     if task.review == "off":
         return None
@@ -608,6 +638,30 @@ def _review_if_needed(
         _emit(on_event, "task_review_failed", task_id=task.id, detail="review blocked")
         return review
 
+    if task.retry < max_review_retries:
+        update_task(
+            repo_root,
+            task.id,
+            status=TaskStatus.pending,
+            retry=task.retry + 1,
+        )
+        if recorder is not None:
+            recorder.finish_task(
+                task.id,
+                status="pending",
+                detail="review retry scheduled",
+                agent_exit_code=agent_result.exit_code,
+                verify_exit_code=verify_exit_code,
+                review=review,
+            )
+        _emit(
+            on_event,
+            "task_review_failed",
+            task_id=task.id,
+            detail="review retry scheduled",
+        )
+        return review
+
     update_task_status(repo_root, task.id, TaskStatus.review_failed)
     if recorder is not None:
         recorder.finish_task(
@@ -620,6 +674,18 @@ def _review_if_needed(
         )
     _emit(on_event, "task_review_failed", task_id=task.id, detail="review needs revision")
     return review
+
+
+def _worktree_for_parallel_task(
+    task: Task,
+    repo_root: Path,
+    base_branch: str,
+) -> Worktree:
+    if latest_review_failure(repo_root, task.id) is not None:
+        worktree = get_worktree(task.id, repo_root)
+        if worktree is not None and worktree.base_branch == base_branch:
+            return worktree
+    return create_worktree(task.id, repo_root, base_branch=base_branch)
 
 
 def _emit(

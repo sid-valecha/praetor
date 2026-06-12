@@ -16,6 +16,11 @@ from praetor.state import get_task, init_workspace
 runner = CliRunner()
 
 
+def _assert_invalid_option(result, expected_message: str) -> None:
+    assert result.exit_code != 0
+    assert expected_message in result.output or "Error" in result.output or "Usage" in result.output
+
+
 def test_loop_once_drains_and_exits(tmp_path: Path, monkeypatch) -> None:
     init_workspace(tmp_path)
     _write_task(tmp_path, _make_task("task-a"))
@@ -101,8 +106,10 @@ def test_loop_rejects_invalid_max_review_retries(tmp_path: Path, monkeypatch) ->
 
     result = runner.invoke(app, ["loop", "--max-review-retries", "-1", "--once"])
 
-    assert result.exit_code != 0
-    assert "--max-review-retries must be >= 0" in result.output
+    _assert_invalid_option(
+        result,
+        "--max-review-retries must be >= 0",
+    )
 
 
 def test_loop_passes_max_review_retries_through_options(

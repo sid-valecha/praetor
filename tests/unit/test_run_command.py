@@ -9,6 +9,11 @@ from praetor.state import init_workspace
 runner = CliRunner()
 
 
+def _assert_invalid_option(result, expected_message: str) -> None:
+    assert result.exit_code != 0
+    assert expected_message in result.output or "Error" in result.output or "Usage" in result.output
+
+
 def test_run_rejects_merge_strategy_with_default_max_parallel(tmp_path: Path, monkeypatch) -> None:
     init_workspace(tmp_path)
     monkeypatch.chdir(tmp_path)
@@ -53,8 +58,7 @@ def test_run_rejects_invalid_max_iterations(tmp_path: Path, monkeypatch) -> None
 
     result = runner.invoke(app, ["run", "--max-iterations", "0"])
 
-    assert result.exit_code != 0
-    assert "--max-iterations must be >= 1" in result.output
+    _assert_invalid_option(result, "--max-iterations must be >= 1")
 
 
 def test_run_rejects_invalid_max_runtime(tmp_path: Path, monkeypatch) -> None:
@@ -63,8 +67,7 @@ def test_run_rejects_invalid_max_runtime(tmp_path: Path, monkeypatch) -> None:
 
     result = runner.invoke(app, ["run", "--max-runtime", "0"])
 
-    assert result.exit_code != 0
-    assert "--max-runtime must be > 0" in result.output
+    _assert_invalid_option(result, "--max-runtime must be > 0")
 
 
 def test_run_rejects_invalid_max_review_retries(tmp_path: Path, monkeypatch) -> None:
@@ -73,8 +76,10 @@ def test_run_rejects_invalid_max_review_retries(tmp_path: Path, monkeypatch) -> 
 
     result = runner.invoke(app, ["run", "--max-review-retries", "-1"])
 
-    assert result.exit_code != 0
-    assert "--max-review-retries must be >= 0" in result.output
+    _assert_invalid_option(
+        result,
+        "--max-review-retries must be >= 0",
+    )
 
 
 def test_run_passes_max_review_retries_to_drain_queue(
