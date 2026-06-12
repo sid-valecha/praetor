@@ -45,6 +45,20 @@ def loop_command(
         ),
     ] = None,
     adapter: Annotated[str, typer.Option("--adapter", help="Agent adapter name.")] = "claude",
+    model: Annotated[
+        str | None,
+        typer.Option(
+            "--model",
+            help="Claude model name to pass through to the claude adapter.",
+        ),
+    ] = None,
+    effort: Annotated[
+        str | None,
+        typer.Option(
+            "--effort",
+            help="Claude thinking/effort level to pass through to the claude adapter.",
+        ),
+    ] = None,
     once: Annotated[
         bool,
         typer.Option(
@@ -59,6 +73,27 @@ def loop_command(
             help="Seconds to wait between polling checks when no filesystem event arrives.",
         ),
     ] = 5.0,
+    max_iterations: Annotated[
+        int | None,
+        typer.Option(
+            "--max-iterations",
+            help="Stop each drain pass after this many task attempts.",
+        ),
+    ] = None,
+    max_runtime: Annotated[
+        float | None,
+        typer.Option(
+            "--max-runtime",
+            help="Stop each drain pass after this many seconds.",
+        ),
+    ] = None,
+    max_review_retries: Annotated[
+        int | None,
+        typer.Option(
+            "--max-review-retries",
+            help="Maximum automatic retries after reviewer rejection.",
+        ),
+    ] = None,
 ) -> None:
     repo_root = Path.cwd()
     require_workspace(repo_root)
@@ -76,9 +111,15 @@ def loop_command(
         )
     if poll_interval <= 0:
         raise_usage_error("--poll-interval must be > 0")
+    if max_iterations is not None and max_iterations < 1:
+        raise_usage_error("--max-iterations must be >= 1")
+    if max_runtime is not None and max_runtime <= 0:
+        raise_usage_error("--max-runtime must be > 0")
+    if max_review_retries is not None and max_review_retries < 0:
+        raise_usage_error("--max-review-retries must be >= 0")
 
     try:
-        agent_adapter = get_adapter(adapter)
+        agent_adapter = get_adapter(adapter, model=model, effort=effort)
     except ValueError as exc:
         raise_usage_error(str(exc))
 
@@ -92,6 +133,9 @@ def loop_command(
                 merge_strategy=merge_strategy,
                 poll_interval=poll_interval,
                 once=once,
+                max_iterations=max_iterations,
+                max_runtime_s=max_runtime,
+                max_review_retries=max_review_retries,
             ),
             on_event=_print_event,
         )

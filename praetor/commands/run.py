@@ -21,6 +21,20 @@ def _print_event(event: RunnerEvent) -> None:
 
 def run_command(
     adapter: Annotated[str, typer.Option("--adapter", help="Agent adapter name.")] = "claude",
+    model: Annotated[
+        str | None,
+        typer.Option(
+            "--model",
+            help="Claude model name to pass through to the claude adapter.",
+        ),
+    ] = None,
+    effort: Annotated[
+        str | None,
+        typer.Option(
+            "--effort",
+            help="Claude thinking/effort level to pass through to the claude adapter.",
+        ),
+    ] = None,
     max_parallel: Annotated[
         int,
         typer.Option(
@@ -45,6 +59,27 @@ def run_command(
             help="Override merge strategy for all tasks this run: auto or manual.",
         ),
     ] = None,
+    max_iterations: Annotated[
+        int | None,
+        typer.Option(
+            "--max-iterations",
+            help="Stop dispatching new tasks after this many task attempts.",
+        ),
+    ] = None,
+    max_runtime: Annotated[
+        float | None,
+        typer.Option(
+            "--max-runtime",
+            help="Stop dispatching new tasks after this many seconds.",
+        ),
+    ] = None,
+    max_review_retries: Annotated[
+        int | None,
+        typer.Option(
+            "--max-review-retries",
+            help="Maximum automatic retries after reviewer rejection.",
+        ),
+    ] = None,
 ) -> None:
     repo_root = Path.cwd()
     require_workspace(repo_root)
@@ -52,6 +87,12 @@ def run_command(
         raise_usage_error("--max-parallel must be >= 1")
     if merge_strategy not in {None, "auto", "manual"}:
         raise_usage_error("--merge-strategy must be one of: auto, manual")
+    if max_iterations is not None and max_iterations < 1:
+        raise_usage_error("--max-iterations must be >= 1")
+    if max_runtime is not None and max_runtime <= 0:
+        raise_usage_error("--max-runtime must be > 0")
+    if max_review_retries is not None and max_review_retries < 0:
+        raise_usage_error("--max-review-retries must be >= 0")
     if merge_strategy is not None and max_parallel == 1:
         raise typer.BadParameter(
             "--merge-strategy only applies in parallel mode "
@@ -62,7 +103,7 @@ def run_command(
         )
 
     try:
-        agent_adapter = get_adapter(adapter)
+        agent_adapter = get_adapter(adapter, model=model, effort=effort)
     except ValueError as exc:
         raise_usage_error(str(exc))
 
@@ -74,6 +115,9 @@ def run_command(
             base_branch=base_branch,
             merge_strategy=merge_strategy,
             on_event=_print_event,
+            max_iterations=max_iterations,
+            max_runtime_s=max_runtime,
+            max_review_retries=max_review_retries,
         )
     except Exception as exc:
         raise ClickException(str(exc)) from exc

@@ -20,7 +20,9 @@ def test_loop_once_drains_and_exits(tmp_path: Path, monkeypatch) -> None:
     init_workspace(tmp_path)
     _write_task(tmp_path, _make_task("task-a"))
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("praetor.commands.loop.get_adapter", lambda adapter: MockAdapter())
+    monkeypatch.setattr(
+        "praetor.commands.loop.get_adapter", lambda adapter, **kwargs: MockAdapter()
+    )
 
     result = runner.invoke(app, ["loop", "--once"])
 
@@ -32,7 +34,9 @@ def test_loop_once_drains_and_exits(tmp_path: Path, monkeypatch) -> None:
 def test_loop_handles_empty_queue_with_once(tmp_path: Path, monkeypatch) -> None:
     init_workspace(tmp_path)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("praetor.commands.loop.get_adapter", lambda adapter: MockAdapter())
+    monkeypatch.setattr(
+        "praetor.commands.loop.get_adapter", lambda adapter, **kwargs: MockAdapter()
+    )
 
     result = runner.invoke(app, ["loop", "--once"])
 
@@ -53,7 +57,10 @@ def test_loop_rejects_merge_strategy_with_default_max_parallel(tmp_path: Path, m
 def test_loop_picks_up_new_task_during_wait(tmp_path: Path, monkeypatch) -> None:
     init_workspace(tmp_path)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("praetor.commands.loop.get_adapter", lambda adapter: MockAdapter())
+    monkeypatch.setattr(
+        "praetor.commands.loop.get_adapter", lambda adapter, **kwargs: MockAdapter()
+    )
+    monkeypatch.setattr("praetor.loop.Observer", None)
 
     worker = threading.Thread(target=_write_task_then_stop_loop, args=(tmp_path,), daemon=True)
     worker.start()
@@ -65,6 +72,69 @@ def test_loop_picks_up_new_task_during_wait(tmp_path: Path, monkeypatch) -> None
     assert get_task(tmp_path, "task-a").status is TaskStatus.done
     assert "[wake]" in result.output
     assert "[stopping] received SIGINT, will exit after current pass" in result.output
+
+
+def test_loop_passes_model_and_effort_to_adapter_factory(tmp_path: Path, monkeypatch) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    captured: dict[str, object] = {}
+
+    def fake_get_adapter(adapter: str, **kwargs: object) -> MockAdapter:
+        captured["adapter"] = adapter
+        captured.update(kwargs)
+        return MockAdapter()
+
+    monkeypatch.setattr("praetor.commands.loop.get_adapter", fake_get_adapter)
+
+    result = runner.invoke(
+        app,
+        ["loop", "--once", "--adapter", "claude", "--model", "haiku", "--effort", "low"],
+    )
+
+    assert result.exit_code == 0
+    assert captured == {"adapter": "claude", "model": "haiku", "effort": "low"}
+
+
+def test_loop_rejects_invalid_max_review_retries(tmp_path: Path, monkeypatch) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["loop", "--max-review-retries", "-1", "--once"])
+
+    assert result.exit_code != 0
+    assert "--max-review-retries must be >= 0" in result.output
+
+
+def test_loop_passes_max_review_retries_through_options(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    captured: dict[str, object] = {}
+
+    def fake_loop_queue(
+        repo_root: Path, adapter: object, options: object, **kwargs: object
+    ) -> None:
+        captured["repo_root"] = repo_root
+        captured["adapter"] = adapter
+        captured["options"] = options
+        captured.update(kwargs)
+
+    monkeypatch.setattr(
+        "praetor.commands.loop.get_adapter", lambda adapter, **kwargs: MockAdapter()
+    )
+    monkeypatch.setattr("praetor.commands.loop.loop_queue", fake_loop_queue)
+
+    result = runner.invoke(app, ["loop", "--once", "--max-review-retries", "0"])
+
+    assert result.exit_code == 0
+    assert captured["options"].max_review_retries == 0
+
+    result = runner.invoke(app, ["loop", "--once", "--max-review-retries", "2"])
+
+    assert result.exit_code == 0
+    assert captured["options"].max_review_retries == 2
 
 
 def _write_task_then_stop_loop(repo_root: Path) -> None:

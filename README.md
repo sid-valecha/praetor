@@ -5,7 +5,7 @@
 [![Python versions](https://img.shields.io/pypi/pyversions/praetor-cli)](https://pypi.org/project/praetor-cli/)
 [![License: MIT](https://img.shields.io/github/license/sid-valecha/praetor)](LICENSE)
 
-Praetor is a local-first task queue and DAG executor for coding agents; it is not another coding agent.
+Praetor is a local-first closed-loop harness for coding agents; it is not another coding agent. It queues scoped work, runs agents in bounded loops, verifies results, records durable run evidence, and can require an independent reviewer before work is merged.
 
 ![Praetor parallel mode demo](docs/demo.gif)
 
@@ -62,9 +62,9 @@ praetor status
 praetor merge --all
 ```
 
-`praetor run --max-parallel 4` enables parallel mode. Ready tasks with `parallel_ok: true` may run concurrently; tasks with `parallel_ok: false` run alone after the active pool drains. The default is still `--max-parallel 1`, which preserves sequential v0 behavior.
+`praetor run --max-parallel 4` enables parallel mode. Ready tasks with `parallel_ok: true` may run concurrently; tasks with `parallel_ok: false` run alone after the active pool drains. The default is still `--max-parallel 1`, which preserves sequential v0 behavior. Add `--max-iterations N` or `--max-runtime SECONDS` to stop dispatching new tasks after a bounded amount of work. With the Claude adapter, pass `--model MODEL` and `--effort LEVEL` to select the Claude model and thinking budget for the executor and reviewer. Praetor maps `--model spark` to Claude Code's `haiku` alias; other model strings pass through unchanged.
 
-Manual merge is the default in parallel mode. After an agent exits, Praetor runs the task's `verify` command in that task's worktree, commits the verified worktree state to `praetor/<task-id>`, and marks the task `pending_merge`. `praetor status` shows `pending_merge` when verified work is waiting for integration and `merge_failed` when an attempted merge or post-merge verification failed and needs human recovery.
+Manual merge is the default in parallel mode. After an agent exits, Praetor runs the task's `verify` command in that task's worktree, runs the optional reviewer gate, commits the accepted worktree state to `praetor/<task-id>`, and marks the task `pending_merge`. `praetor status` shows `pending_merge` when accepted work is waiting for integration and `merge_failed` when an attempted merge or post-merge verification failed and needs human recovery.
 
 Merge all waiting tasks:
 
@@ -94,16 +94,18 @@ praetor loop --max-parallel 4
 
 Pass `--once` to get the same single-pass behavior while exercising the loop command surface. In long-running mode, Ctrl-C requests cooperative shutdown: Praetor finishes any in-flight drain pass, does not start another one, and exits cleanly.
 
+`--max-iterations` and `--max-runtime` also work with `praetor loop`; they apply to each drain pass, not to the whole watcher lifetime.
+
 ## CLI Reference
 
 | Command | Key options | Purpose |
 |---|---|---|
 | `praetor` | `--install-completion`, `--show-completion` | Root command; Typer also exposes shell completion helpers. |
 | `praetor init` | none | Create `.praetor/` state in the current repository. |
-| `praetor add` | `--title`, `--depends-on`, `--verify`, `--parallel-ok/--no-parallel-ok`, `--merge-strategy`, `--agent` | Create a task markdown file under `.praetor/tasks/`. |
+| `praetor add` | `--title`, `--depends-on`, `--verify`, `--parallel-ok/--no-parallel-ok`, `--merge-strategy`, `--review`, `--agent` | Create a task markdown file under `.praetor/tasks/`. |
 | `praetor status` | `--json` | Print task status. With `--json`, emit a JSON array (one object per task with all schema fields plus a derived `ready` bool) instead of the Rich table — for scripts, CI pipelines, and non-MCP agent callers. |
-| `praetor run` | `--adapter`, `--max-parallel`, `--base-branch`, `--merge-strategy` | Drain ready tasks with the selected agent adapter. `--max-parallel 1` runs sequentially; values greater than 1 use worktrees. |
-| `praetor loop` | `--adapter`, `--max-parallel`, `--base-branch`, `--merge-strategy`, `--once`, `--poll-interval` | Drain once, then keep watching `.praetor/tasks/` and drain again when new work appears. |
+| `praetor run` | `--adapter`, `--model`, `--effort`, `--max-parallel`, `--base-branch`, `--merge-strategy`, `--max-iterations`, `--max-runtime` | Drain ready tasks with the selected agent adapter. `--max-parallel 1` runs sequentially; values greater than 1 use worktrees. `--model` and `--effort` are Claude-adapter options. |
+| `praetor loop` | `--adapter`, `--model`, `--effort`, `--max-parallel`, `--base-branch`, `--merge-strategy`, `--once`, `--poll-interval`, `--max-iterations`, `--max-runtime` | Drain once, then keep watching `.praetor/tasks/` and drain again when new work appears. `--model` and `--effort` are Claude-adapter options. |
 | `praetor merge` | `TASK_ID...`, `--all`, `--retry`, `--base-branch` | Merge `pending_merge` tasks back to the base branch. With `--retry`, also retry `merge_failed` tasks. |
 | `praetor reset` | `TASK_ID...`, `--clean-worktree`, `--all-stale` | Reset failed, blocked, merge-failed, or stale-running tasks back to `pending`. |
 | `praetor logs <task-id>` | `<task-id>` | Print the saved log for one task. |
@@ -122,6 +124,22 @@ The CLI `--merge-strategy` flag on `praetor run` overrides all tasks for that ru
 The `--merge-strategy` flag is only valid in parallel mode; passing it with `--max-parallel 1` is rejected with a clear error.
 
 `praetor merge` uses `git merge --no-ff --no-edit` from `praetor/<task-id>` into the base branch. It refuses to merge if the base repo has uncommitted changes, records conflicts in the task log, and leaves the task as `merge_failed` for retry. After a successful merge, Praetor reruns that task's `verify` command on the base branch; a non-zero post-merge verify result also leaves the task as `merge_failed`.
+
+## Review Gate
+
+Set `review: lenient` or `review: strict` to run an adversarial reviewer after the agent exits and the verify command passes. The reviewer uses the same adapter/model/effort as the executor in v1.2, but the Claude adapter switches the reviewer to read-only plan permission mode. The reviewer must return structured JSON. `pass` continues the normal completion or merge path. `needs_revision` marks the task `review_failed` and leaves dependents pending. `blocked` marks the task blocked and propagates that block to dependents.
+
+Review always wins over auto-merge. If a task has `merge_strategy: auto` but the reviewer rejects it, Praetor does not commit or merge the work.
+
+## Run History
+
+Every `praetor run` and drain pass writes durable evidence to:
+
+```text
+.praetor/runs/<run-id>.json
+```
+
+Run records include task attempts, adapter name, verify exit code, review verdict and findings, merge outcome, timestamps, and final run status. This is the audit trail for closed-loop execution and the substrate for future cost tracking, reflection, and GUI views.
 
 ## Worktrees
 
@@ -191,12 +209,12 @@ Summarize the files changed and include the verify output.
 | Field | Description |
 |---|---|
 | `id` | Stable task id; also used as the task filename stem. |
-| `status` | Persisted values are `pending`, `running`, `done`, `failed`, `blocked`, `pending_merge`, `merge_failed`, or `cancelled`. The DAG resolver and `praetor status` derive readiness from `pending` tasks whose dependencies are all `done`; readiness is not a persisted status. |
+| `status` | Persisted values are `pending`, `running`, `done`, `failed`, `blocked`, `pending_merge`, `merge_failed`, `review_failed`, or `cancelled`. The DAG resolver and `praetor status` derive readiness from `pending` tasks whose dependencies are all `done`; readiness is not a persisted status. |
 | `depends_on` | List of task ids that must be `done` before this task can run. |
 | `parallel_ok` | Whether this task may run concurrently with other ready tasks. Default: `true`. Set `false` for cross-cutting or exclusive work. |
 | `agent` | Intended agent for this task. Default: `claude`. `praetor run --adapter` selects the runtime adapter for the run. |
 | `verify` | Shell command run after the agent exits. A non-zero exit keeps the task from completing. |
-| `review` | v1+: reviewer mode, one of `off`, `lenient`, or `strict`. Present in v0 files for forward compatibility. |
+| `review` | Reviewer mode, one of `off`, `lenient`, or `strict`. Non-`off` values run the post-verify reviewer gate. |
 | `merge_strategy` | Parallel-mode merge behavior, one of `manual` or `auto`. Default: `manual`. `praetor run --merge-strategy` overrides this field for all tasks in that run. |
 | `retry` | Forward-compatible retry counter. Present in task files; retry policy is not implemented yet. |
 | `priority` | Forward-compatible scheduling hint, one of `low`, `normal`, or `high`. Present in task files; ready-set priority ordering is not implemented yet. |
@@ -207,11 +225,11 @@ Summarize the files changed and include the verify output.
 
 ## How It Works
 
-Praetor stores state as files under `.praetor/`: task markdown in `.praetor/tasks/`, per-task logs in `.praetor/logs/`, per-task worktrees in `.praetor/worktrees/`, and global run metadata in `.praetor/state.json`. The DAG resolver computes the ready set from `pending` tasks whose dependencies are all `done`.
+Praetor stores state as files under `.praetor/`: task markdown in `.praetor/tasks/`, per-task logs in `.praetor/logs/`, per-run JSON records in `.praetor/runs/`, per-task worktrees in `.praetor/worktrees/`, and global run metadata in `.praetor/state.json`. The DAG resolver computes the ready set from `pending` tasks whose dependencies are all `done`.
 
-With `--max-parallel 1`, Praetor runs one ready task at a time in the current checkout. After the agent exits, the task's `verify` command gates whether the task is marked `done` or `failed`.
+With `--max-parallel 1`, Praetor runs one ready task at a time in the current checkout. After the agent exits, the task's `verify` command and optional reviewer gate determine whether the task is marked `done`, `failed`, `review_failed`, or `blocked`.
 
-With `--max-parallel > 1`, Praetor creates a worktree and branch for each dispatched task, runs the agent and verify command inside that worktree, commits the verified result, then either parks it as `pending_merge` or merges it automatically depending on the effective merge strategy. Once merged, Praetor reruns that task's `verify` command on the base branch before marking the task `done`.
+With `--max-parallel > 1`, Praetor creates a worktree and branch for each dispatched task, runs the agent and verify command inside that worktree, runs the optional reviewer, commits the verified and reviewed result, then either parks it as `pending_merge` or merges it automatically depending on the effective merge strategy. Once merged, Praetor reruns that task's `verify` command on the base branch before marking the task `done`.
 
 ## Limitations
 
@@ -220,7 +238,7 @@ v1 parallel execution is functional, but these items are intentionally not imple
 - Dispatch-time conflict detection for overlapping task scopes: [issue #4](https://github.com/sid-valecha/praetor/issues/4)
 - Worktree cleanup flag for disk-pressure management: [issue #7](https://github.com/sid-valecha/praetor/issues/7)
 - Multi-OS CI: [issue #8](https://github.com/sid-valecha/praetor/issues/8)
-- Per-task env propagation, run history, cancel command, blocked-task auto-unblock, and cost/token accounting are tracked in [issues](https://github.com/sid-valecha/praetor/issues).
+- Per-task env propagation, cancel command, blocked-task auto-unblock, and cost/token accounting are tracked in [issues](https://github.com/sid-valecha/praetor/issues).
 
 ## Docker / Sandboxed Runs
 
@@ -245,11 +263,11 @@ docker run --rm -it -v "$PWD:/repo" -w /repo praetor-cli \
 
 ## Roadmap
 
-[v1 parallel execution](roadmap.md#roadmap) adds worktrees, a worker pool, concurrent execution for eligible DAG siblings, and manual or automatic merge integration. [v1.1 MCP + Claude Code plugin](roadmap.md#roadmap) adds the MCP server and plugin distribution. v2 adds planner mode; v3 adds the meta loop and a GUI over the same file-based state.
+[v1 parallel execution](roadmap.md#roadmap) added worktrees, a worker pool, concurrent execution for eligible DAG siblings, and manual or automatic merge integration. [v1.1 MCP + Claude Code plugin](roadmap.md#roadmap) added the MCP server and plugin distribution. v1.2 adds trustworthy closed-loop execution with run history, reviewer gating, and guardrails. v2 adds planner mode; v3 adds the meta loop and a GUI over the same file-based state.
 
 ## Use with Claude Code
 
-Praetor ships a Claude Code plugin bundle in `plugin/`. It provides the task-authoring and plan-decomposition skills plus an MCP server config that runs `praetor mcp`; install or test it with `claude --plugin-dir ./plugin` after making sure the `praetor` executable is on `PATH`.
+Praetor ships a Claude Code plugin bundle in `plugin/`. It provides task-authoring, plan-decomposition, and task-review skills plus an MCP server config that runs `praetor mcp`; install or test it with `claude --plugin-dir ./plugin` after making sure the `praetor` executable is on `PATH`.
 
 ## License
 

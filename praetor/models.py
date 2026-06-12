@@ -11,6 +11,7 @@ class TaskStatus(StrEnum):
     running = "running"
     pending_merge = "pending_merge"
     merge_failed = "merge_failed"
+    review_failed = "review_failed"
     cancelled = "cancelled"
     done = "done"
     failed = "failed"
@@ -64,6 +65,25 @@ class TaskResult(BaseModel):
     diff: str | None = None
     tokens_used: int | None = None
     cost_usd: float | None = None
+
+
+class ReviewFinding(BaseModel):
+    severity: Literal["info", "warning", "error"]
+    message: str
+    file: str | None = None
+    line: int | None = None
+    recommendation: str | None = None
+
+
+class ReviewResult(BaseModel):
+    verdict: Literal["pass", "needs_revision", "blocked"]
+    severity: Literal["info", "warning", "error"]
+    summary: str
+    findings: list[ReviewFinding] = Field(default_factory=list)
+    reviewer_adapter: str
+    started_at: datetime
+    finished_at: datetime
+    duration_ms: int
 
 
 class AgentAdapter(Protocol):

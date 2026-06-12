@@ -85,15 +85,29 @@ def get_task(repo_root: Path, task_id: str) -> Task:
     return task[0]
 
 
-def update_task_status(repo_root: Path, task_id: str, status: TaskStatus) -> None:
-    task = get_task(repo_root, task_id)
-    path = _find_task_path(repo_root, task_id)
-    if path is None:
+def update_task(
+    repo_root: Path,
+    task_id: str,
+    *,
+    status: TaskStatus | None = None,
+    retry: int | None = None,
+) -> Task:
+    found = _find_task(repo_root, task_id)
+    if found is None:
         msg = f"Task not found: {task_id}"
         raise KeyError(msg)
 
-    task.status = status
+    task, path = found
+    if status is not None:
+        task.status = status
+    if retry is not None:
+        task.retry = retry
     dump_task(task, path)
+    return task
+
+
+def update_task_status(repo_root: Path, task_id: str, status: TaskStatus) -> None:
+    update_task(repo_root, task_id, status=status)
 
 
 def read_global_state(repo_root: Path) -> dict:

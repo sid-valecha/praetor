@@ -58,3 +58,10 @@ def test_drain_queue_allows_pending_merge_resting_state(tmp_path: Path) -> None:
     drain_queue(tmp_path, MockAdapter())
 
     assert get_task(tmp_path, "task-a").status is TaskStatus.pending_merge
+
+
+def test_drain_queue_rejects_boolean_max_review_retries(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+
+    with pytest.raises(ValueError, match="max_review_retries"):
+        drain_queue(tmp_path, MockAdapter(), max_review_retries=True)

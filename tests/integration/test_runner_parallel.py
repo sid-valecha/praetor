@@ -45,6 +45,25 @@ class FileEditingAdapter(SleepRecordingAdapter):
         return super().exec(prompt, cwd, timeout_s)
 
 
+class ReviewRejectingFileEditingAdapter(FileEditingAdapter):
+    def exec(self, prompt: str, cwd: Path, timeout_s: float | None = None) -> TaskResult:
+        if prompt.startswith("You are the Praetor task reviewer."):
+            return TaskResult(
+                exit_code=0,
+                stdout=(
+                    "{"
+                    '"verdict": "needs_revision", '
+                    '"severity": "error", '
+                    '"summary": "wrong behavior", '
+                    '"findings": []'
+                    "}"
+                ),
+                stderr="",
+                duration_ms=0,
+            )
+        return super().exec(prompt, cwd, timeout_s)
+
+
 @pytest.fixture
 def scratch_repo(tmp_path: Path) -> Path:
     repo_root = tmp_path / "repo"
@@ -155,6 +174,23 @@ def test_parallel_drain_with_per_task_auto_field_merges(scratch_repo: Path) -> N
     assert _branch_contains(scratch_repo, "main", "praetor/task-b")
 
 
+def test_review_failure_overrides_auto_merge(scratch_repo: Path) -> None:
+    _write_task(
+        scratch_repo, _make_task("task-a", offset=0, merge_strategy="auto", review="strict")
+    )
+
+    drain_queue(
+        scratch_repo,
+        ReviewRejectingFileEditingAdapter({"task-a": {"task-a.txt": "task-a\n"}}),
+        max_parallel=2,
+    )
+
+    assert get_task(scratch_repo, "task-a").status is TaskStatus.review_failed
+    assert not (scratch_repo / "task-a.txt").exists()
+    log_text = (scratch_repo / ".praetor" / "logs" / "task-a.log").read_text()
+    assert "verdict: needs_revision" in log_text
+
+
 def test_parallel_ok_false_runs_alone(scratch_repo: Path) -> None:
     _write_task(scratch_repo, _make_task("task-a", offset=0))
     _write_task(scratch_repo, _make_task("task-b", offset=1, parallel_ok=False))
@@ -181,6 +217,22 @@ def test_worktree_collision_recovery(scratch_repo: Path) -> None:
     assert get_task(scratch_repo, "task-Y").status is TaskStatus.pending_merge
     log_text = (scratch_repo / ".praetor" / "logs" / "task-X.log").read_text()
     assert "Worktree collision for task-X" in log_text
+
+
+def test_worktree_collision_does_not_consume_iteration_budget(scratch_repo: Path) -> None:
+    create_worktree("task-X", scratch_repo)
+    _write_task(scratch_repo, _make_task("task-X", offset=0))
+    _write_task(scratch_repo, _make_task("task-Y", offset=1))
+
+    drain_queue(
+        scratch_repo,
+        SleepRecordingAdapter(),
+        max_parallel=2,
+        max_iterations=1,
+    )
+
+    assert get_task(scratch_repo, "task-X").status is TaskStatus.failed
+    assert get_task(scratch_repo, "task-Y").status is TaskStatus.pending_merge
 
 
 def test_merge_failed_does_not_block_independent_siblings(scratch_repo: Path) -> None:
@@ -236,6 +288,7 @@ def _make_task(
     depends_on: list[str] | None = None,
     merge_strategy: str = "manual",
     verify: str = "true",
+    review: str = "off",
 ) -> Task:
     return Task(
         id=task_id,
@@ -244,6 +297,7 @@ def _make_task(
         parallel_ok=parallel_ok,
         merge_strategy=merge_strategy,
         verify=verify,
+        review=review,
         created=datetime(2026, 6, 8, 12, 0, tzinfo=UTC) + timedelta(minutes=offset),
         body=f"# {task_id}\n\nTASK_ID: {task_id}\n",
     )

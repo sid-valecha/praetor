@@ -37,7 +37,7 @@ def test_run_accepts_merge_strategy_with_max_parallel_greater_than_one(
 ) -> None:
     init_workspace(tmp_path)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("praetor.commands.run.get_adapter", lambda adapter: MockAdapter())
+    monkeypatch.setattr("praetor.commands.run.get_adapter", lambda adapter, **kwargs: MockAdapter())
 
     result = runner.invoke(
         app,
@@ -45,3 +45,81 @@ def test_run_accepts_merge_strategy_with_max_parallel_greater_than_one(
     )
 
     assert result.exit_code == 0
+
+
+def test_run_rejects_invalid_max_iterations(tmp_path: Path, monkeypatch) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["run", "--max-iterations", "0"])
+
+    assert result.exit_code != 0
+    assert "--max-iterations must be >= 1" in result.output
+
+
+def test_run_rejects_invalid_max_runtime(tmp_path: Path, monkeypatch) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["run", "--max-runtime", "0"])
+
+    assert result.exit_code != 0
+    assert "--max-runtime must be > 0" in result.output
+
+
+def test_run_rejects_invalid_max_review_retries(tmp_path: Path, monkeypatch) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["run", "--max-review-retries", "-1"])
+
+    assert result.exit_code != 0
+    assert "--max-review-retries must be >= 0" in result.output
+
+
+def test_run_passes_max_review_retries_to_drain_queue(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    captured: dict[str, object] = {}
+
+    def fake_drain_queue(repo_root: Path, adapter: object, **kwargs: object) -> None:
+        captured["repo_root"] = repo_root
+        captured["adapter"] = adapter
+        captured.update(kwargs)
+
+    monkeypatch.setattr("praetor.commands.run.get_adapter", lambda adapter, **kwargs: MockAdapter())
+    monkeypatch.setattr("praetor.commands.run.drain_queue", fake_drain_queue)
+
+    result = runner.invoke(app, ["run", "--max-review-retries", "0"])
+
+    assert result.exit_code == 0
+    assert captured["max_review_retries"] == 0
+
+    result = runner.invoke(app, ["run", "--max-review-retries", "2"])
+
+    assert result.exit_code == 0
+    assert captured["max_review_retries"] == 2
+
+
+def test_run_passes_model_and_effort_to_adapter_factory(tmp_path: Path, monkeypatch) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    captured: dict[str, object] = {}
+
+    def fake_get_adapter(adapter: str, **kwargs: object) -> MockAdapter:
+        captured["adapter"] = adapter
+        captured.update(kwargs)
+        return MockAdapter()
+
+    monkeypatch.setattr("praetor.commands.run.get_adapter", fake_get_adapter)
+
+    result = runner.invoke(
+        app,
+        ["run", "--adapter", "claude", "--model", "haiku", "--effort", "low"],
+    )
+
+    assert result.exit_code == 0
+    assert captured == {"adapter": "claude", "model": "haiku", "effort": "low"}

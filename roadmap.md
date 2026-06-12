@@ -4,7 +4,7 @@
 
 Coding agents today force a binary choice: full autonomy (one giant prompt, agent drifts, weak trust) or constant babysitting (manual prompt for each next step, exhausting). The middle ground — **queue up scoped work, let an implementer agent drain the queue, verify each result** — has no good tooling. Simon Last's thread (Notion) frames this as "your job is to add vetted tasks faster than the agent completes them; the implementer should never idle." That maps directly to the user's lived pain: finishing one feature with Claude Code and then having to hand-prompt the next instead of having five queued.
 
-Praetor is the workflow/orchestration layer around existing coding agents (Claude Code first, agent-agnostic by design). It is **not** another coding agent. It is the queue, the DAG executor, the verification harness, and the Claude Code plugin that teaches sessions how to use it.
+Praetor is the closed-loop harness around existing coding agents (Claude Code first, agent-agnostic by design). It is **not** another coding agent. It is the queue, the DAG executor, the verification/review harness, durable run ledger, and Claude Code plugin that teaches sessions how to use it.
 
 The goal for the weekend is a solid **foundation**, not a demo. Every version after Monday extends the same base without rewrites.
 
@@ -15,19 +15,21 @@ The goal for the weekend is a solid **foundation**, not a demo. Every version af
 - Agent-agnostic via a thin adapter interface (Claude Code first; Codex, Aider follow)
 - Ship as a Claude Code plugin (CLI + skills + MCP) for tier-2 adoption; plain CLI works standalone for tier-1 / non-Claude users
 - Architecture supports reviewer agent, planner mode, GUI, meta-loop later — without schema migration
+- Make the trust gate the product: executor output must survive verify commands, adversarial review, retry limits, and merge policy before it is considered shippable
+- Support power-user operation: many agents, isolated worktrees, optional container execution, and PM-orchestrated delegation without constant permission babysitting
 
 ## Non-goals
 
 - Building a coding agent
 - Auto-decomposition of fuzzy goals into tasks (the user or their PM Claude does this)
-- Memory/context layer (rely on repo `CLAUDE.md` + `.praetor/context.md`)
+- Hosted memory/vector service as a default dependency
 - Multi-repo, remote execution, team collaboration (v3+ at earliest)
 
 ## Usage tiers
 
 1. **Plain CLI** — `praetor add`, edit task markdown, `praetor run`. Works with any agent. Zero Claude assumptions.
 2. **Claude Code plugin user** — installs plugin; their normal session uses bundled skills to author tasks, decompose goals, and drive the queue via MCP. No "PM session" terminology required.
-3. **Power user** — dedicated long-running conductor session + worker pool, fully out of the loop. Same primitives.
+3. **Power user** — dedicated long-running conductor session + worker pool, fully out of the loop. Same primitives, plus explicit retry budgets, cross-model review, and optional container isolation once those land.
 
 All three share identical CLI substrate and state files.
 
@@ -73,7 +75,7 @@ All three share identical CLI substrate and state files.
 ```markdown
 ---
 id: 003-stripe-webhook
-status: pending          # pending | running | pending_merge | merge_failed | cancelled | done | failed | blocked
+status: pending          # pending | running | pending_merge | merge_failed | review_failed | cancelled | done | failed | blocked
 depends_on: [002-stripe-keys]
 parallel_ok: true        # honored by v1+
 agent: claude            # claude | codex | aider — v1.3+
@@ -172,26 +174,65 @@ Ship as plain markdown in `skills/`. Claude Code picks them up when the plugin i
 - `praetor reset` recovery command
 - Progress events for `praetor run` / `praetor loop`
 
-**v1.2 — Adversarial reviewer**
-- Post-verify read-only subagent reviews diff against task+plan
-- Gaps create follow-up tasks or block original
-- `review:` frontmatter field activated
+**v1.2 — Trustworthy closed loops (shipped)**
+- Run history in `.praetor/runs/<run-id>.json`
+- Post-verify adversarial reviewer for `review: lenient|strict`
+- `review_failed` task state for reviewer rejections
 - `task-review` skill shipped
+- `--max-iterations` and `--max-runtime` guardrails for `praetor run` / `praetor loop`
 
-**v1.3 — Agent-agnostic**
-- Real Codex adapter, probably Aider
-- Per-task agent selection
+**v1.2.1 — Review recovery UX**
+- Make `review_failed` obvious in `praetor status`, logs, run history, and MCP responses
+- Feed the latest reviewer findings into the next retry prompt so the next executor sees the criticism it must fix
+- Add a review retry budget so loops do not burn tokens indefinitely
+- Default automatic review retries: 1
+- Config precedence: CLI flag first, then `.praetor/config.toml`, then built-in default
+- Planned flags/config: `--max-review-retries N` and `.praetor/config.toml` `max_review_retries = 1`
+- Stop cleanly once the retry budget is exhausted and leave the task in `review_failed` with findings intact
 
-**v2 — Planner mode**
+**v1.3 — Cross-model trust gate**
+- Real Codex adapter, probably Aider after that
+- Per-task agent selection via existing `agent:` field
+- Add reviewer selection at run time: `--reviewer-adapter`, `--reviewer-model`, `--reviewer-effort`
+- Default reviewer remains same adapter/model/effort as executor
+- Strong path: Claude implements and Codex reviews, or Codex implements and Claude reviews
+- Preserve maker/checker separation in run history so users can audit which agent wrote and which agent reviewed
+
+**v1.4 — Memory compounding**
+- Add `.praetor/learnings.md`
+- Summarize completed, failed, and rejected runs into human-readable lessons
+- Keep default memory local, inspectable, and file-based
+- Treat `.praetor/runs/*.json` as the structured source of truth and `learnings.md` as the narrative layer
+- Use reviewer failures as especially valuable memory: "what got missed, what fixed it, what to avoid next time"
+
+**v1.x — Optional memory experiments**
+- Define a `MemoryBackend` seam only once real query patterns appear
+- SQLite/FTS is the first serious backend candidate because it stays local and inspectable
+- Hyperspell/vector memory is an optional branch or demo integration, not a core default
+- Hosted memory backends must be opt-in because they break the default no-cloud invariant
+
+**v1.x — Power-user execution**
+- Improve multi-agent operation for users with higher Codex/Claude budgets
+- Run independent tasks across separate worktrees and branches with less manual babysitting
+- Support Codex-native subagent workflows as a first-class PM pattern for exploration, review fan-out, and independent implementation threads
+- Support Claude PM sessions delegating to Codex through `openai/codex-plugin-cc` as an interop path, while keeping Praetor's own queue/model independent of either vendor's plugin surface
+- Explore containerized agent execution so permissive modes can run inside a controlled boundary
+- Add ergonomics for PM sessions dispatching worker agents and reviewing results
+- Dogfood Praetor on Praetor: use Praetor tasks, worktrees, review gates, and retry policies to build Praetor itself
+
+**v2 — Planner mode + maintainer intake**
 - `praetor plan "goal"` short-lived planning session writes plan.md + drafts tasks
+- GitHub Issues / PR comment intake
+- Linear and Slack intake once the task-source abstraction is clear
+- Patrol loops for background maintenance: failing CI, stale blocked tasks, new issues, aging review failures
 
 **v2.x — Quality of life**
-- Retry policy, cost tracking, run history, hooks (pre/post task, e.g. ntfy)
+- Cost tracking, hooks (pre/post task, e.g. ntfy), richer config, cancellation, cleanup, and workflow polish
 
 **v3 — Meta loop + GUI**
-- Post-task summaries → `learnings.md`
 - Reflection pass updates `context.md`
 - Web GUI reading `.praetor/` state (trivial because state is on-disk markdown/json)
+- Optional semantic recall over run history once markdown/json recall is demonstrably insufficient
 
 ## Historical Monday landing zone
 

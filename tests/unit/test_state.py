@@ -10,6 +10,7 @@ from praetor.state import (
     init_workspace,
     list_tasks,
     read_global_state,
+    update_task,
     update_task_status,
     write_global_state,
 )
@@ -153,6 +154,21 @@ def test_update_task_status_persists(tmp_path: Path) -> None:
     update_task_status(tmp_path, "001-task", TaskStatus.done)
 
     assert parse_task(path).status is TaskStatus.done
+
+
+def test_update_task_persists_status_and_retry_together(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+    path = tmp_path / ".praetor" / "tasks" / "001-task.md"
+    task = make_task("001-task", datetime(2026, 5, 23, 14, 22, tzinfo=UTC))
+    dump_task(task, path)
+
+    updated = update_task(tmp_path, "001-task", status=TaskStatus.review_failed, retry=1)
+
+    persisted = parse_task(path)
+    assert updated.status is TaskStatus.review_failed
+    assert updated.retry == 1
+    assert persisted.status is TaskStatus.review_failed
+    assert persisted.retry == 1
 
 
 def test_write_read_global_state_round_trips(tmp_path: Path) -> None:

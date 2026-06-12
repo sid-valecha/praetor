@@ -38,12 +38,21 @@ def add_command(
             help="Merge strategy for this task: auto or manual.",
         ),
     ] = "manual",
+    review: Annotated[
+        str,
+        typer.Option(
+            "--review",
+            help="Reviewer mode for this task: off, lenient, or strict.",
+        ),
+    ] = "off",
     agent: Annotated[str, typer.Option("--agent", help="Agent adapter name.")] = "claude",
 ) -> None:
     repo_root = Path.cwd()
     require_workspace(repo_root)
     if merge_strategy not in {"auto", "manual"}:
         raise typer.BadParameter("merge strategy must be one of: auto, manual")
+    if review not in {"off", "lenient", "strict"}:
+        raise typer.BadParameter("review must be one of: off, lenient, strict")
 
     task_id = _task_id_from_title(title)
     dependencies = [
@@ -56,6 +65,7 @@ def add_command(
         parallel_ok=parallel_ok,
         agent=agent,
         verify=verify,
+        review=review,
         merge_strategy=merge_strategy,
         created=datetime.now(UTC),
         body=f"# {title}\n",

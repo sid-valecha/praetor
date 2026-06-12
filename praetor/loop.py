@@ -33,6 +33,9 @@ class LoopOptions:
     merge_strategy: str | None = None
     poll_interval: float = 5.0
     once: bool = False
+    max_iterations: int | None = None
+    max_runtime_s: float | None = None
+    max_review_retries: int | None = None
 
 
 class TaskFileHandler(FileSystemEventHandler):
@@ -110,6 +113,9 @@ def _drain_and_log(
         base_branch=options.base_branch,
         merge_strategy=options.merge_strategy,
         on_event=on_event,
+        max_iterations=options.max_iterations,
+        max_runtime_s=options.max_runtime_s,
+        max_review_retries=options.max_review_retries,
     )
     completed_count = len(_successful_task_ids(repo_root) - before_successful)
     if options.max_parallel == 1:

@@ -15,6 +15,7 @@ def create_task(
     parallel_ok: bool = True,
     agent: str = "claude",
     verify: str | None = None,
+    review: str = "off",
     merge_strategy: str = "manual",
 ) -> Task:
     task = Task(
@@ -24,6 +25,7 @@ def create_task(
         parallel_ok=parallel_ok,
         agent=agent,
         verify=verify,
+        review=review,
         merge_strategy=merge_strategy,
         created=datetime.now(UTC),
         body=f"# {title}\n",

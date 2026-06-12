@@ -7,6 +7,7 @@ import pytest
 from praetor.frontmatter import dump_task, parse_task
 from praetor.mcp import add_task
 from praetor.mcp import get_logs
+from praetor.mcp import get_latest_run
 from praetor.mcp import get_task as mcp_get_task
 from praetor.mcp import init_workspace as mcp_init_workspace
 from praetor.mcp import list_tasks as mcp_list_tasks
@@ -86,6 +87,7 @@ def test_add_task_creates_task_file(tmp_path: Path) -> None:
         "Add MCP task",
         depends_on=["foundation"],
         verify="pytest tests/unit/test_mcp.py",
+        review="strict",
     )
 
     task_path = tmp_path / ".praetor" / "tasks" / f"{result['id']}.md"
@@ -94,6 +96,7 @@ def test_add_task_creates_task_file(tmp_path: Path) -> None:
     assert task.id == result["id"]
     assert task.depends_on == ["foundation"]
     assert task.verify == "pytest tests/unit/test_mcp.py"
+    assert task.review == "strict"
     assert task.parallel_ok is True
 
 
@@ -140,12 +143,58 @@ def test_get_logs_returns_empty_for_missing_log(tmp_path: Path) -> None:
     assert get_logs(str(tmp_path), "task-a") == {"task_id": "task-a", "log": ""}
 
 
+def test_get_latest_run_returns_none_when_missing(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+
+    assert get_latest_run(str(tmp_path)) is None
+
+
 def test_start_drain_propagates_stale_running_error(tmp_path: Path) -> None:
     init_workspace(tmp_path)
     _write_task(tmp_path, _make_task("task-a", TaskStatus.running))
 
     with pytest.raises(StaleRunningError, match="task-a"):
         start_drain(str(tmp_path))
+
+
+def test_start_drain_passes_model_and_effort_to_claude_adapter(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_drain_queue(repo_root: Path, adapter: object, **kwargs: object) -> None:
+        captured["repo_root"] = repo_root
+        captured["adapter"] = adapter
+        captured.update(kwargs)
+
+    monkeypatch.setattr("praetor.mcp.drain_queue", fake_drain_queue)
+
+    result = start_drain(str(tmp_path), model="haiku", effort="low")
+
+    assert result == {"status": "completed"}
+    adapter = captured["adapter"]
+    assert getattr(adapter, "model") == "haiku"
+    assert getattr(adapter, "effort") == "low"
+
+
+def test_start_drain_passes_max_review_retries_to_drain_queue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_drain_queue(repo_root: Path, adapter: object, **kwargs: object) -> None:
+        captured["repo_root"] = repo_root
+        captured["adapter"] = adapter
+        captured.update(kwargs)
+
+    monkeypatch.setattr("praetor.mcp.drain_queue", fake_drain_queue)
+
+    result = start_drain(str(tmp_path), max_review_retries=2)
+
+    assert result == {"status": "completed"}
+    assert captured["max_review_retries"] == 2
 
 
 def _make_task(

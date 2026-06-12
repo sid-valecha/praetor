@@ -108,7 +108,10 @@ def test_parallel_ok_round_trips_and_serializes_as_yaml_bool(
     assert parse_task(path).parallel_ok is parallel_ok
 
 
-@pytest.mark.parametrize("status", [TaskStatus.pending_merge, TaskStatus.merge_failed])
+@pytest.mark.parametrize(
+    "status",
+    [TaskStatus.pending_merge, TaskStatus.merge_failed, TaskStatus.review_failed],
+)
 def test_merge_status_values_round_trip(tmp_path: Path, status: TaskStatus) -> None:
     path = tmp_path / f"{status.value}.md"
     task = Task.model_validate(

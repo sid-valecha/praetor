@@ -8,12 +8,16 @@ from concurrent.futures import FIRST_COMPLETED, Future, wait
 from dataclasses import dataclass
 import subprocess
 from pathlib import Path
+from time import perf_counter
 
+from praetor.config import resolve_max_review_retries
 from praetor.dag import compute_ready_set, propagate_blocked
 from praetor.events import EventCallback, EventType, RunnerEvent
 from praetor.merge_queue import merge_one_task
-from praetor.models import AgentAdapter, Task, TaskResult, TaskStatus
+from praetor.models import AgentAdapter, ReviewResult, Task, TaskResult, TaskStatus
 from praetor.pool import WorkerPool
+from praetor.review import format_review_for_log, run_task_review
+from praetor.run_history import RunRecorder
 from praetor.state import list_tasks, update_task_status
 from praetor.worktree import Worktree, WorktreeError, create_worktree
 
@@ -26,6 +30,38 @@ class StaleRunningError(RuntimeError):
 class RunningTask:
     task: Task
     worktree: Worktree
+
+
+@dataclass
+class DrainGuardrails:
+    max_iterations: int | None = None
+    max_runtime_s: float | None = None
+    started_at: float = 0.0
+    iterations: int = 0
+
+    def __post_init__(self) -> None:
+        self.started_at = perf_counter()
+
+    def can_start_task(self) -> bool:
+        if self.remaining_iterations() <= 0:
+            return False
+        if (
+            self.max_runtime_s is not None
+            and perf_counter() - self.started_at >= self.max_runtime_s
+        ):
+            return False
+        return True
+
+    def remaining_iterations(self) -> int:
+        if self.max_iterations is None:
+            return 1_000_000_000
+        return max(self.max_iterations - self.iterations, 0)
+
+    def consume_iteration(self) -> None:
+        self.iterations += 1
+
+    def reached_limit(self) -> bool:
+        return not self.can_start_task()
 
 
 def render_task_prompt(task: Task, context: str = "") -> str:
@@ -43,6 +79,7 @@ def run_once(
     repo_root: Path,
     adapter: AgentAdapter,
     on_event: EventCallback | None = None,
+    recorder: RunRecorder | None = None,
 ) -> bool:
     ready_tasks = compute_ready_set(list_tasks(repo_root))
     if not ready_tasks:
@@ -50,6 +87,8 @@ def run_once(
 
     task = ready_tasks[0]
     update_task_status(repo_root, task.id, TaskStatus.running)
+    if recorder is not None:
+        recorder.start_task(task.id, adapter=adapter.name, verify_command=task.verify)
 
     try:
         context_path = repo_root / ".praetor" / "context.md"
@@ -59,6 +98,8 @@ def run_once(
         result = adapter.exec(prompt, cwd=repo_root)
     except Exception:
         _mark_failed_and_propagate(repo_root, task.id)
+        if recorder is not None:
+            recorder.finish_task(task.id, status="failed", detail="adapter exception")
         _emit(on_event, "task_failed", task_id=task.id, detail="adapter exception")
         raise
 
@@ -68,11 +109,40 @@ def run_once(
 
     if result.exit_code != 0:
         _mark_failed_and_propagate(repo_root, task.id)
+        if recorder is not None:
+            recorder.finish_task(
+                task.id,
+                status="failed",
+                detail="agent failed",
+                agent_exit_code=result.exit_code,
+            )
         _emit(on_event, "task_failed", task_id=task.id, detail="agent failed")
         return True
 
+    verify_output = ""
+    verify_exit_code: int | None = None
     if task.verify is None:
+        review_result = _review_if_needed(
+            repo_root,
+            task,
+            adapter,
+            cwd=repo_root,
+            agent_result=result,
+            verify_output=verify_output,
+            verify_exit_code=verify_exit_code,
+            recorder=recorder,
+            on_event=on_event,
+        )
+        if review_result is not None and review_result.verdict != "pass":
+            return True
         update_task_status(repo_root, task.id, TaskStatus.done)
+        if recorder is not None:
+            recorder.finish_task(
+                task.id,
+                status="done",
+                agent_exit_code=result.exit_code,
+                review=review_result,
+            )
         _emit(on_event, "task_completed", task_id=task.id)
         return True
 
@@ -83,15 +153,47 @@ def run_once(
         capture_output=True,
         text=True,
     )
+    verify_output = f"{verify_result.stdout}{verify_result.stderr}"
+    verify_exit_code = verify_result.returncode
     with log_path.open("a") as log_file:
-        log_file.write(f"{verify_result.stdout}{verify_result.stderr}")
+        log_file.write(verify_output)
 
     if verify_result.returncode != 0:
         _mark_failed_and_propagate(repo_root, task.id)
+        if recorder is not None:
+            recorder.finish_task(
+                task.id,
+                status="failed",
+                detail="verify failed",
+                agent_exit_code=result.exit_code,
+                verify_exit_code=verify_exit_code,
+            )
         _emit(on_event, "task_failed", task_id=task.id, detail="verify failed")
         return True
 
+    review_result = _review_if_needed(
+        repo_root,
+        task,
+        adapter,
+        cwd=repo_root,
+        agent_result=result,
+        verify_output=verify_output,
+        verify_exit_code=verify_exit_code,
+        recorder=recorder,
+        on_event=on_event,
+    )
+    if review_result is not None and review_result.verdict != "pass":
+        return True
+
     update_task_status(repo_root, task.id, TaskStatus.done)
+    if recorder is not None:
+        recorder.finish_task(
+            task.id,
+            status="done",
+            agent_exit_code=result.exit_code,
+            verify_exit_code=verify_exit_code,
+            review=review_result,
+        )
     _emit(on_event, "task_completed", task_id=task.id)
     return True
 
@@ -103,8 +205,12 @@ def drain_queue(
     base_branch: str = "main",
     merge_strategy: str | None = None,
     on_event: EventCallback | None = None,
+    max_iterations: int | None = None,
+    max_runtime_s: float | None = None,
+    max_review_retries: int | None = None,
 ) -> None:
     _raise_on_stale_running(list_tasks(repo_root))
+    resolved_max_review_retries = resolve_max_review_retries(repo_root, max_review_retries)
 
     if not isinstance(max_parallel, int) or isinstance(max_parallel, bool) or max_parallel < 1:
         msg = "max_parallel must be >= 1"
@@ -112,12 +218,29 @@ def drain_queue(
     if merge_strategy not in {None, "auto", "manual"}:
         msg = "merge_strategy must be one of: auto, manual"
         raise ValueError(msg)
+    if max_iterations is not None and max_iterations < 1:
+        msg = "max_iterations must be >= 1"
+        raise ValueError(msg)
+    if max_runtime_s is not None and max_runtime_s <= 0:
+        msg = "max_runtime_s must be > 0"
+        raise ValueError(msg)
 
-    _emit(on_event, "drain_started")
+    guardrails = DrainGuardrails(max_iterations=max_iterations, max_runtime_s=max_runtime_s)
+    recorder = RunRecorder(
+        repo_root,
+        max_parallel=max_parallel,
+        base_branch=base_branch,
+        merge_strategy=merge_strategy,
+        max_review_retries=resolved_max_review_retries,
+    )
+    _emit(on_event, "drain_started", detail=recorder.run_id)
+    run_status = "completed"
     try:
         if max_parallel == 1:
-            while run_once(repo_root, adapter, on_event=on_event):
-                pass
+            while guardrails.can_start_task():
+                if not run_once(repo_root, adapter, on_event=on_event, recorder=recorder):
+                    break
+                guardrails.consume_iteration()
             return
 
         _drain_parallel(
@@ -127,8 +250,16 @@ def drain_queue(
             base_branch,
             merge_strategy,
             on_event,
+            recorder,
+            guardrails,
         )
+    except Exception:
+        run_status = "failed"
+        raise
     finally:
+        if run_status == "completed" and guardrails.reached_limit():
+            run_status = "stopped"
+        recorder.finish_run(run_status)
         _emit(on_event, "drain_finished")
 
 
@@ -139,6 +270,8 @@ def _drain_parallel(
     base_branch: str,
     merge_strategy: str | None,
     on_event: EventCallback | None,
+    recorder: RunRecorder,
+    guardrails: DrainGuardrails,
 ) -> None:
     in_flight: dict[Future[TaskResult], RunningTask] = {}
 
@@ -151,6 +284,8 @@ def _drain_parallel(
                 in_flight,
                 base_branch,
                 on_event,
+                recorder,
+                guardrails,
             )
             if not in_flight:
                 if not made_progress:
@@ -162,10 +297,12 @@ def _drain_parallel(
                 running_task = in_flight.pop(future)
                 _complete_parallel_task(
                     repo_root,
+                    adapter,
                     future,
                     running_task,
                     merge_strategy,
                     on_event,
+                    recorder,
                 )
 
 
@@ -176,8 +313,14 @@ def _submit_ready_tasks(
     in_flight: dict[Future[TaskResult], RunningTask],
     base_branch: str,
     on_event: EventCallback | None,
+    recorder: RunRecorder,
+    guardrails: DrainGuardrails,
 ) -> bool:
+    if not guardrails.can_start_task():
+        return False
+
     capacity = pool.max_parallel - len(in_flight)
+    capacity = min(capacity, guardrails.remaining_iterations())
     if capacity <= 0:
         return False
 
@@ -190,13 +333,31 @@ def _submit_ready_tasks(
         if in_flight:
             return False
         return _submit_parallel_task(
-            repo_root, adapter, pool, in_flight, solo_tasks[0], base_branch, on_event
+            repo_root,
+            adapter,
+            pool,
+            in_flight,
+            solo_tasks[0],
+            base_branch,
+            on_event,
+            recorder,
+            guardrails,
         )
 
     submitted = False
     for task in ready_tasks[:capacity]:
         submitted = (
-            _submit_parallel_task(repo_root, adapter, pool, in_flight, task, base_branch, on_event)
+            _submit_parallel_task(
+                repo_root,
+                adapter,
+                pool,
+                in_flight,
+                task,
+                base_branch,
+                on_event,
+                recorder,
+                guardrails,
+            )
             or submitted
         )
     return submitted
@@ -210,16 +371,22 @@ def _submit_parallel_task(
     task: Task,
     base_branch: str,
     on_event: EventCallback | None,
+    recorder: RunRecorder,
+    guardrails: DrainGuardrails,
 ) -> bool:
     try:
         worktree = create_worktree(task.id, repo_root, base_branch=base_branch)
     except WorktreeError as exc:
         _write_task_log(repo_root, task.id, f"Worktree collision for {task.id}: {exc}\n")
         _mark_failed_and_propagate(repo_root, task.id)
+        recorder.start_task(task.id, adapter=adapter.name, verify_command=task.verify)
+        recorder.finish_task(task.id, status="failed", detail="worktree setup failed")
         _emit(on_event, "task_failed", task_id=task.id, detail="worktree setup failed")
         return True
 
     update_task_status(repo_root, task.id, TaskStatus.running)
+    recorder.start_task(task.id, adapter=adapter.name, verify_command=task.verify)
+    guardrails.consume_iteration()
     context_path = repo_root / ".praetor" / "context.md"
     context = context_path.read_text() if context_path.exists() else ""
     prompt = render_task_prompt(task, context)
@@ -231,10 +398,12 @@ def _submit_parallel_task(
 
 def _complete_parallel_task(
     repo_root: Path,
+    adapter: AgentAdapter,
     future: Future[TaskResult],
     running_task: RunningTask,
     run_merge_strategy_override: str | None,
     on_event: EventCallback | None,
+    recorder: RunRecorder,
 ) -> None:
     task = running_task.task
     try:
@@ -242,6 +411,7 @@ def _complete_parallel_task(
     except Exception as exc:  # noqa: BLE001
         _write_task_log(repo_root, task.id, f"Adapter failed for {task.id}: {exc}\n")
         _mark_failed_and_propagate(repo_root, task.id)
+        recorder.finish_task(task.id, status="failed", detail="adapter exception")
         _emit(on_event, "task_failed", task_id=task.id, detail="adapter exception")
         return
 
@@ -249,9 +419,17 @@ def _complete_parallel_task(
 
     if result.exit_code != 0:
         _mark_failed_and_propagate(repo_root, task.id)
+        recorder.finish_task(
+            task.id,
+            status="failed",
+            detail="agent failed",
+            agent_exit_code=result.exit_code,
+        )
         _emit(on_event, "task_failed", task_id=task.id, detail="agent failed")
         return
 
+    verify_output = ""
+    verify_exit_code: int | None = None
     if task.verify is not None:
         verify_result = subprocess.run(
             task.verify,
@@ -261,30 +439,77 @@ def _complete_parallel_task(
             text=True,
             check=False,
         )
-        _append_task_log(repo_root, task.id, f"{verify_result.stdout}{verify_result.stderr}")
+        verify_output = f"{verify_result.stdout}{verify_result.stderr}"
+        verify_exit_code = verify_result.returncode
+        _append_task_log(repo_root, task.id, verify_output)
 
         if verify_result.returncode != 0:
             _mark_failed_and_propagate(repo_root, task.id)
+            recorder.finish_task(
+                task.id,
+                status="failed",
+                detail="verify failed",
+                agent_exit_code=result.exit_code,
+                verify_exit_code=verify_exit_code,
+            )
             _emit(on_event, "task_failed", task_id=task.id, detail="verify failed")
             return
 
+    review_result = _review_if_needed(
+        repo_root,
+        task,
+        adapter,
+        cwd=running_task.worktree.path,
+        agent_result=result,
+        verify_output=verify_output,
+        verify_exit_code=verify_exit_code,
+        recorder=recorder,
+        on_event=on_event,
+    )
+    if review_result is not None and review_result.verdict != "pass":
+        return
+
     if not _commit_worktree_changes(repo_root, task.id, running_task.worktree.path):
         _mark_failed_and_propagate(repo_root, task.id)
+        recorder.finish_task(
+            task.id,
+            status="failed",
+            detail="commit failed",
+            agent_exit_code=result.exit_code,
+            verify_exit_code=verify_exit_code,
+            review=review_result,
+        )
         _emit(on_event, "task_failed", task_id=task.id, detail="commit failed")
         return
 
     strategy = run_merge_strategy_override or task.merge_strategy
     if strategy == "manual":
         update_task_status(repo_root, task.id, TaskStatus.pending_merge)
+        recorder.finish_task(
+            task.id,
+            status="pending_merge",
+            agent_exit_code=result.exit_code,
+            verify_exit_code=verify_exit_code,
+            review=review_result,
+            merge_status="manual",
+        )
         _emit(on_event, "task_completed", task_id=task.id)
         _emit(on_event, "task_pending_merge", task_id=task.id)
         return
 
-    merge_one_task(
+    merge_result = merge_one_task(
         repo_root,
         task.id,
         base_branch=running_task.worktree.base_branch,
         on_event=on_event,
+    )
+    recorder.finish_task(
+        task.id,
+        status="done" if merge_result.success else "merge_failed",
+        agent_exit_code=result.exit_code,
+        verify_exit_code=verify_exit_code,
+        review=review_result,
+        merge_status=merge_result.message,
     )
 
 
@@ -337,6 +562,66 @@ def _commit_worktree_changes(repo_root: Path, task_id: str, worktree_path: Path)
     return commit_result.returncode == 0
 
 
+def _review_if_needed(
+    repo_root: Path,
+    task: Task,
+    adapter: AgentAdapter,
+    *,
+    cwd: Path,
+    agent_result: TaskResult,
+    verify_output: str,
+    verify_exit_code: int | None,
+    recorder: RunRecorder | None,
+    on_event: EventCallback | None,
+) -> ReviewResult | None:
+    if task.review == "off":
+        return None
+
+    _emit(on_event, "task_review_started", task_id=task.id)
+    review_adapter = _review_adapter(adapter)
+    review = run_task_review(
+        task,
+        review_adapter,
+        cwd=cwd,
+        agent_result=agent_result,
+        verify_output=verify_output,
+    )
+    _append_task_log(repo_root, task.id, format_review_for_log(review))
+    if recorder is not None:
+        recorder.record_review(task.id, review)
+
+    if review.verdict == "pass":
+        _emit(on_event, "task_review_succeeded", task_id=task.id)
+        return review
+
+    if review.verdict == "blocked":
+        _mark_blocked_and_propagate(repo_root, task.id)
+        if recorder is not None:
+            recorder.finish_task(
+                task.id,
+                status="blocked",
+                detail="review blocked",
+                agent_exit_code=agent_result.exit_code,
+                verify_exit_code=verify_exit_code,
+                review=review,
+            )
+        _emit(on_event, "task_review_failed", task_id=task.id, detail="review blocked")
+        return review
+
+    update_task_status(repo_root, task.id, TaskStatus.review_failed)
+    if recorder is not None:
+        recorder.finish_task(
+            task.id,
+            status="review_failed",
+            detail="review needs revision",
+            agent_exit_code=agent_result.exit_code,
+            verify_exit_code=verify_exit_code,
+            review=review,
+        )
+    _emit(on_event, "task_review_failed", task_id=task.id, detail="review needs revision")
+    return review
+
+
 def _emit(
     callback: EventCallback | None,
     event_type: EventType,
@@ -367,7 +652,21 @@ def _run_git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
         )
 
 
+def _review_adapter(adapter: AgentAdapter) -> AgentAdapter:
+    factory = getattr(adapter, "for_review", None)
+    if not callable(factory):
+        return adapter
+    review_adapter = factory()
+    return review_adapter
+
+
 def _mark_failed_and_propagate(repo_root: Path, task_id: str) -> None:
     update_task_status(repo_root, task_id, TaskStatus.failed)
+    for blocked_task_id in propagate_blocked(list_tasks(repo_root)):
+        update_task_status(repo_root, blocked_task_id, TaskStatus.blocked)
+
+
+def _mark_blocked_and_propagate(repo_root: Path, task_id: str) -> None:
+    update_task_status(repo_root, task_id, TaskStatus.blocked)
     for blocked_task_id in propagate_blocked(list_tasks(repo_root)):
         update_task_status(repo_root, blocked_task_id, TaskStatus.blocked)

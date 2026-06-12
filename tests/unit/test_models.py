@@ -12,6 +12,7 @@ def test_task_status_values() -> None:
         "running",
         "pending_merge",
         "merge_failed",
+        "review_failed",
         "cancelled",
         "done",
         "failed",

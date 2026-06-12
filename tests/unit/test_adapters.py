@@ -37,8 +37,28 @@ def test_get_adapter_claude() -> None:
     assert isinstance(get_adapter("claude"), ClaudeCodeAdapter)
 
 
+def test_get_adapter_claude_applies_model_and_effort() -> None:
+    adapter = get_adapter("claude", model="haiku", effort="low")
+
+    assert isinstance(adapter, ClaudeCodeAdapter)
+    assert adapter.model == "haiku"
+    assert adapter.effort == "low"
+
+
+def test_get_adapter_claude_maps_spark_to_haiku() -> None:
+    adapter = get_adapter("claude", model="spark")
+
+    assert isinstance(adapter, ClaudeCodeAdapter)
+    assert adapter.model == "haiku"
+
+
 def test_get_adapter_mock() -> None:
     assert isinstance(get_adapter("mock"), MockAdapter)
+
+
+def test_get_adapter_rejects_model_for_non_claude() -> None:
+    with pytest.raises(ValueError, match="only supported by the claude adapter"):
+        get_adapter("mock", model="haiku")
 
 
 def test_get_adapter_unknown_raises() -> None:
@@ -66,3 +86,70 @@ def test_claude_adapter_returns_task_result_on_os_error(
     assert "claude not found" in result.stderr
     assert result.duration_ms >= 0
     assert result.diff is None
+
+
+def test_claude_adapter_passes_model_effort_and_permission_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[list[str]] = []
+
+    def fake_run(
+        command: list[str],
+        **kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = ClaudeCodeAdapter(model="haiku", effort="low").exec("prompt", tmp_path)
+
+    assert result.exit_code == 0
+    assert commands == [
+        [
+            "claude",
+            "-p",
+            "--permission-mode",
+            "auto",
+            "--model",
+            "haiku",
+            "--effort",
+            "low",
+            "prompt",
+        ]
+    ]
+
+
+def test_claude_review_adapter_is_plan_mode_with_same_model_and_effort(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[list[str]] = []
+
+    def fake_run(
+        command: list[str],
+        **kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    adapter = ClaudeCodeAdapter(model="opus", effort="high").for_review()
+    result = adapter.exec("review prompt", tmp_path)
+
+    assert result.exit_code == 0
+    assert commands == [
+        [
+            "claude",
+            "-p",
+            "--permission-mode",
+            "plan",
+            "--model",
+            "opus",
+            "--effort",
+            "high",
+            "review prompt",
+        ]
+    ]

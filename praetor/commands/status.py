@@ -21,6 +21,8 @@ STATUS_STYLES = {
     "running": "blue",
     "pending_merge": "cyan",
     "merge_failed": "orange3",
+    "review_failed": "orange3",
+    "cancelled": "grey50",
     "done": "green",
     "failed": "red",
     "blocked": "magenta",

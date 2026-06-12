@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "praetor-cli"
-version = "1.1.0"
-description = "Local-first task queue and DAG executor for coding agents"
+version = "1.2.0"
+description = "Local-first closed-loop harness for coding agents"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }

@@ -7,6 +7,7 @@ from praetor.dag import compute_ready_set
 from praetor.merge_queue import merge_all_pending as merge_all_pending_core
 from praetor.merge_queue import merge_one_task
 from praetor.runner import drain_queue
+from praetor.run_history import latest_run
 from praetor.serialize import task_to_dict
 from praetor.state import get_task as state_get_task
 from praetor.state import init_workspace as state_init_workspace
@@ -50,6 +51,7 @@ def add_task(
     parallel_ok: bool = True,
     agent: str = "claude",
     verify: str | None = None,
+    review: str = "off",
     merge_strategy: str = "manual",
 ) -> dict[str, Any]:
     """Create a Praetor task."""
@@ -60,6 +62,7 @@ def add_task(
         parallel_ok=parallel_ok,
         agent=agent,
         verify=verify,
+        review=review,
         merge_strategy=merge_strategy,
     )
     return task_to_dict(task)
@@ -71,14 +74,22 @@ def start_drain(
     max_parallel: int = 1,
     base_branch: str = "main",
     merge_strategy: str | None = None,
+    max_iterations: int | None = None,
+    max_runtime_s: float | None = None,
+    max_review_retries: int | None = None,
+    model: str | None = None,
+    effort: str | None = None,
 ) -> dict[str, str]:
     """Drain ready Praetor tasks using Claude Code."""
     drain_queue(
         Path(repo_root),
-        ClaudeCodeAdapter(),
+        ClaudeCodeAdapter(model=model, effort=effort),
         max_parallel=max_parallel,
         base_branch=base_branch,
         merge_strategy=merge_strategy,
+        max_iterations=max_iterations,
+        max_runtime_s=max_runtime_s,
+        max_review_retries=max_review_retries,
     )
     return {"status": "completed"}
 
@@ -112,6 +123,13 @@ def get_logs(repo_root: str, task_id: str) -> dict[str, str]:
     """Read a Praetor task log."""
     log_path = Path(repo_root) / ".praetor" / "logs" / f"{task_id}.log"
     return {"task_id": task_id, "log": log_path.read_text() if log_path.exists() else ""}
+
+
+@server.tool()
+def get_latest_run(repo_root: str) -> dict[str, Any] | None:
+    """Fetch the latest Praetor run-history record."""
+    run = latest_run(Path(repo_root))
+    return None if run is None else run.model_dump(mode="json")
 
 
 def run_stdio() -> None:
