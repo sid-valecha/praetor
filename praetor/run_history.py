@@ -14,6 +14,8 @@ class TaskRunRecord(BaseModel):
     started_at: datetime
     finished_at: datetime | None = None
     adapter: str | None = None
+    executor_model: str | None = None
+    executor_effort: str | None = None
     verify_command: str | None = None
     agent_exit_code: int | None = None
     verify_exit_code: int | None = None
@@ -68,6 +70,8 @@ class RunRecorder:
         *,
         adapter: str,
         verify_command: str | None,
+        executor_model: str | None = None,
+        executor_effort: str | None = None,
     ) -> None:
         self.record.task_runs.append(
             TaskRunRecord(
@@ -75,6 +79,8 @@ class RunRecorder:
                 status="running",
                 started_at=_now(),
                 adapter=adapter,
+                executor_model=executor_model,
+                executor_effort=executor_effort,
                 verify_command=verify_command,
             )
         )

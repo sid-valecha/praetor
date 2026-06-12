@@ -5,7 +5,7 @@ from typing import Annotated
 import typer
 from typer._click.exceptions import ClickException
 
-from praetor.adapters import get_adapter
+from praetor.adapters import get_adapter, resolve_reviewer_adapter
 from praetor.commands import raise_usage_error, require_workspace
 from praetor.events import RunnerEvent
 from praetor.runner import drain_queue
@@ -80,6 +80,27 @@ def run_command(
             help="Maximum automatic retries after reviewer rejection.",
         ),
     ] = None,
+    reviewer_adapter: Annotated[
+        str | None,
+        typer.Option(
+            "--reviewer-adapter",
+            help="Reviewer adapter name. Defaults to the executor adapter when reviewer options are supplied.",
+        ),
+    ] = None,
+    reviewer_model: Annotated[
+        str | None,
+        typer.Option(
+            "--reviewer-model",
+            help="Reviewer model name. Defaults to the executor model for the same adapter.",
+        ),
+    ] = None,
+    reviewer_effort: Annotated[
+        str | None,
+        typer.Option(
+            "--reviewer-effort",
+            help="Reviewer thinking/effort level. Defaults to the executor effort for the same adapter.",
+        ),
+    ] = None,
 ) -> None:
     repo_root = Path.cwd()
     require_workspace(repo_root)
@@ -104,6 +125,14 @@ def run_command(
 
     try:
         agent_adapter = get_adapter(adapter, model=model, effort=effort)
+        review_adapter = resolve_reviewer_adapter(
+            executor_adapter=adapter,
+            executor_model=model,
+            executor_effort=effort,
+            reviewer_adapter=reviewer_adapter,
+            reviewer_model=reviewer_model,
+            reviewer_effort=reviewer_effort,
+        )
     except ValueError as exc:
         raise_usage_error(str(exc))
 
@@ -118,6 +147,7 @@ def run_command(
             max_iterations=max_iterations,
             max_runtime_s=max_runtime,
             max_review_retries=max_review_retries,
+            reviewer_adapter=review_adapter,
         )
     except Exception as exc:
         raise ClickException(str(exc)) from exc

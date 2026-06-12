@@ -81,6 +81,8 @@ class ReviewResult(BaseModel):
     summary: str
     findings: list[ReviewFinding] = Field(default_factory=list)
     reviewer_adapter: str
+    reviewer_model: str | None = None
+    reviewer_effort: str | None = None
     started_at: datetime
     finished_at: datetime
     duration_ms: int

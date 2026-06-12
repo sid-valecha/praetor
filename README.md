@@ -62,7 +62,7 @@ praetor status
 praetor merge --all
 ```
 
-`praetor run --max-parallel 4` enables parallel mode. Ready tasks with `parallel_ok: true` may run concurrently; tasks with `parallel_ok: false` run alone after the active pool drains. The default is still `--max-parallel 1`, which preserves sequential v0 behavior. Add `--max-iterations N` or `--max-runtime SECONDS` to stop dispatching new tasks after a bounded amount of work. With the Claude adapter, pass `--model MODEL` and `--effort LEVEL` to select the Claude model and thinking budget for the executor and reviewer. Praetor maps `--model spark` to Claude Code's `haiku` alias; other model strings pass through unchanged.
+`praetor run --max-parallel 4` enables parallel mode. Ready tasks with `parallel_ok: true` may run concurrently; tasks with `parallel_ok: false` run alone after the active pool drains. The default is still `--max-parallel 1`, which preserves sequential v0 behavior. Add `--max-iterations N` or `--max-runtime SECONDS` to stop dispatching new tasks after a bounded amount of work. With the Claude adapter, pass `--model MODEL` and `--effort LEVEL` to select the Claude model and thinking budget for the executor. Praetor maps `--model spark` to Claude Code's `haiku` alias; other model strings pass through unchanged.
 
 Manual merge is the default in parallel mode. After an agent exits, Praetor runs the task's `verify` command in that task's worktree, runs the optional reviewer gate, commits the accepted worktree state to `praetor/<task-id>`, and marks the task `pending_merge`. `praetor status` shows `pending_merge` when accepted work is waiting for integration and `merge_failed` when an attempted merge or post-merge verification failed and needs human recovery.
 
@@ -104,8 +104,8 @@ Pass `--once` to get the same single-pass behavior while exercising the loop com
 | `praetor init` | none | Create `.praetor/` state in the current repository. |
 | `praetor add` | `--title`, `--depends-on`, `--verify`, `--parallel-ok/--no-parallel-ok`, `--merge-strategy`, `--review`, `--agent` | Create a task markdown file under `.praetor/tasks/`. |
 | `praetor status` | `--json` | Print task status. With `--json`, emit a JSON array (one object per task with all schema fields plus a derived `ready` bool) instead of the Rich table — for scripts, CI pipelines, and non-MCP agent callers. |
-| `praetor run` | `--adapter`, `--model`, `--effort`, `--max-parallel`, `--base-branch`, `--merge-strategy`, `--max-iterations`, `--max-runtime` | Drain ready tasks with the selected agent adapter. `--max-parallel 1` runs sequentially; values greater than 1 use worktrees. `--model` and `--effort` are Claude-adapter options. |
-| `praetor loop` | `--adapter`, `--model`, `--effort`, `--max-parallel`, `--base-branch`, `--merge-strategy`, `--once`, `--poll-interval`, `--max-iterations`, `--max-runtime` | Drain once, then keep watching `.praetor/tasks/` and drain again when new work appears. `--model` and `--effort` are Claude-adapter options. |
+| `praetor run` | `--adapter`, `--model`, `--effort`, `--reviewer-adapter`, `--reviewer-model`, `--reviewer-effort`, `--max-parallel`, `--base-branch`, `--merge-strategy`, `--max-iterations`, `--max-runtime` | Drain ready tasks with the selected agent adapter. `--max-parallel 1` runs sequentially; values greater than 1 use worktrees. `--model` and `--effort` are Claude executor options; reviewer options override the review route for that run. |
+| `praetor loop` | `--adapter`, `--model`, `--effort`, `--reviewer-adapter`, `--reviewer-model`, `--reviewer-effort`, `--max-parallel`, `--base-branch`, `--merge-strategy`, `--once`, `--poll-interval`, `--max-iterations`, `--max-runtime` | Drain once, then keep watching `.praetor/tasks/` and drain again when new work appears. Executor and reviewer model/effort flags follow the same semantics as `praetor run`. |
 | `praetor merge` | `TASK_ID...`, `--all`, `--retry`, `--base-branch` | Merge `pending_merge` tasks back to the base branch. With `--retry`, also retry `merge_failed` tasks. |
 | `praetor reset` | `TASK_ID...`, `--clean-worktree`, `--all-stale` | Reset failed, blocked, merge-failed, or stale-running tasks back to `pending`. |
 | `praetor logs <task-id>` | `<task-id>` | Print the saved log for one task. |
@@ -127,7 +127,7 @@ The `--merge-strategy` flag is only valid in parallel mode; passing it with `--m
 
 ## Review Gate
 
-Set `review: lenient` or `review: strict` to run an adversarial reviewer after the agent exits and the verify command passes. The reviewer uses the same adapter/model/effort as the executor in v1.2, but the Claude adapter switches the reviewer to read-only plan permission mode. The reviewer must return structured JSON. `pass` continues the normal completion or merge path. `needs_revision` marks the task `review_failed` and leaves dependents pending. `blocked` marks the task blocked and propagates that block to dependents.
+Set `review: lenient` or `review: strict` to run an adversarial reviewer after the agent exits and the verify command passes. By default, the reviewer uses the executor adapter/model/effort, but `praetor run` and `praetor loop` can override that route with `--reviewer-adapter`, `--reviewer-model`, and `--reviewer-effort`. The Claude adapter switches reviewer calls to read-only plan permission mode. The reviewer must return structured JSON. `pass` continues the normal completion or merge path. `needs_revision` marks the task `review_failed` and leaves dependents pending. `blocked` marks the task blocked and propagates that block to dependents.
 
 Review always wins over auto-merge. If a task has `merge_strategy: auto` but the reviewer rejects it, Praetor does not commit or merge the work.
 
@@ -139,7 +139,7 @@ Every `praetor run` and drain pass writes durable evidence to:
 .praetor/runs/<run-id>.json
 ```
 
-Run records include task attempts, adapter name, verify exit code, review verdict and findings, merge outcome, timestamps, and final run status. This is the audit trail for closed-loop execution and the substrate for future cost tracking, reflection, and GUI views.
+Run records include task attempts, executor adapter/model/effort, verify exit code, reviewer adapter/model/effort, review verdict and findings, merge outcome, timestamps, and final run status. This is the audit trail for closed-loop execution and the substrate for future cost tracking, reflection, and GUI views.
 
 ## Worktrees
 

@@ -62,6 +62,8 @@ def run_task_review(
                 )
             ],
             reviewer_adapter=adapter.name,
+            reviewer_model=getattr(adapter, "model", None),
+            reviewer_effort=getattr(adapter, "effort", None),
             started_at=started_at,
             finished_at=finished_at,
             duration_ms=duration_ms,
@@ -73,6 +75,8 @@ def run_task_review(
             {
                 **payload,
                 "reviewer_adapter": adapter.name,
+                "reviewer_model": getattr(adapter, "model", None),
+                "reviewer_effort": getattr(adapter, "effort", None),
                 "started_at": started_at,
                 "finished_at": finished_at,
                 "duration_ms": duration_ms,
@@ -91,6 +95,8 @@ def run_task_review(
                 )
             ],
             reviewer_adapter=adapter.name,
+            reviewer_model=getattr(adapter, "model", None),
+            reviewer_effort=getattr(adapter, "effort", None),
             started_at=started_at,
             finished_at=finished_at,
             duration_ms=duration_ms,

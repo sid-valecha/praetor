@@ -3,7 +3,13 @@ import subprocess
 
 import pytest
 
-from praetor.adapters import ClaudeCodeAdapter, CodexAdapter, MockAdapter, get_adapter
+from praetor.adapters import (
+    ClaudeCodeAdapter,
+    CodexAdapter,
+    MockAdapter,
+    get_adapter,
+    resolve_reviewer_adapter,
+)
 
 
 def test_mock_adapter_returns_configured_values() -> None:
@@ -59,6 +65,60 @@ def test_get_adapter_mock() -> None:
 def test_get_adapter_rejects_model_for_non_claude() -> None:
     with pytest.raises(ValueError, match="only supported by the claude adapter"):
         get_adapter("mock", model="haiku")
+
+
+def test_resolve_reviewer_adapter_returns_none_without_reviewer_options() -> None:
+    assert (
+        resolve_reviewer_adapter(
+            executor_adapter="claude",
+            executor_model="haiku",
+            executor_effort="low",
+            reviewer_adapter=None,
+            reviewer_model=None,
+            reviewer_effort=None,
+        )
+        is None
+    )
+
+
+def test_resolve_reviewer_adapter_inherits_executor_claude_options() -> None:
+    reviewer = resolve_reviewer_adapter(
+        executor_adapter="claude",
+        executor_model="spark",
+        executor_effort="low",
+        reviewer_adapter=None,
+        reviewer_model=None,
+        reviewer_effort="high",
+    )
+
+    assert isinstance(reviewer, ClaudeCodeAdapter)
+    assert reviewer.model == "haiku"
+    assert reviewer.effort == "high"
+
+
+def test_resolve_reviewer_adapter_does_not_inherit_across_adapter_names() -> None:
+    reviewer = resolve_reviewer_adapter(
+        executor_adapter="claude",
+        executor_model="haiku",
+        executor_effort="low",
+        reviewer_adapter="mock",
+        reviewer_model=None,
+        reviewer_effort=None,
+    )
+
+    assert isinstance(reviewer, MockAdapter)
+
+
+def test_resolve_reviewer_adapter_rejects_model_for_non_claude_reviewer() -> None:
+    with pytest.raises(ValueError, match="only supported by the claude adapter"):
+        resolve_reviewer_adapter(
+            executor_adapter="mock",
+            executor_model=None,
+            executor_effort=None,
+            reviewer_adapter=None,
+            reviewer_model="haiku",
+            reviewer_effort=None,
+        )
 
 
 def test_get_adapter_unknown_raises() -> None:
