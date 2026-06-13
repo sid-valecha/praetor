@@ -60,19 +60,40 @@ class CodexAdapter:
 
     def exec(self, prompt: str, cwd: Path, timeout_s: float | None = None) -> TaskResult:
         start = time.monotonic()
-        schema_path = self._write_review_schema() if self.review_mode else None
-        command = self._command(cwd, schema_path=schema_path)
+        schema_path = None
 
         try:
+            schema_path = self._write_review_schema() if self.review_mode else None
+            command = self._command(cwd, schema_path=schema_path)
             completed = subprocess.run(
                 command,
                 input=prompt,
                 cwd=cwd,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=timeout_s,
             )
-        except (subprocess.TimeoutExpired, OSError) as exc:
+        except subprocess.TimeoutExpired as exc:
+            duration_ms = int((time.monotonic() - start) * 1000)
+            return TaskResult(
+                exit_code=124,
+                stdout="",
+                stderr=f"codex CLI timed out after {exc.timeout} seconds",
+                duration_ms=duration_ms,
+                diff=None,
+            )
+        except FileNotFoundError:
+            duration_ms = int((time.monotonic() - start) * 1000)
+            return TaskResult(
+                exit_code=127,
+                stdout="",
+                stderr="codex CLI not found on PATH",
+                duration_ms=duration_ms,
+                diff=None,
+            )
+        except OSError as exc:
             duration_ms = int((time.monotonic() - start) * 1000)
             return TaskResult(
                 exit_code=1,
@@ -104,7 +125,7 @@ class CodexAdapter:
                 "--sandbox",
                 "read-only",
                 "-c",
-                "approval_policy='never'",
+                _codex_config("approval_policy", "never"),
             ]
             if schema_path is not None:
                 command.extend(["--output-schema", str(schema_path)])
@@ -117,16 +138,13 @@ class CodexAdapter:
                 "--sandbox",
                 "workspace-write",
                 "-c",
-                "approval_policy='never'",
+                _codex_config("approval_policy", "never"),
             ]
 
         if self.model is not None:
-            if self.review_mode:
-                command.extend(["-c", f"model='{self.model}'"])
-            else:
-                command.extend(["--model", self.model])
+            command.extend(["--model", self.model])
         if self.effort is not None:
-            command.extend(["-c", f"model_reasoning_effort='{self.effort}'"])
+            command.extend(["-c", _codex_config("model_reasoning_effort", self.effort)])
         command.append("-")
         return command
 
@@ -141,3 +159,7 @@ class CodexAdapter:
         with schema_file:
             json.dump(REVIEW_OUTPUT_SCHEMA, schema_file)
         return Path(schema_file.name)
+
+
+def _codex_config(key: str, value: str) -> str:
+    return f"{key}={json.dumps(value)}"

@@ -63,17 +63,19 @@ def test_codex_adapter_exec_invokes_codex_exec(
         "--sandbox",
         "workspace-write",
         "-c",
-        "approval_policy='never'",
+        'approval_policy="never"',
         "--model",
         "gpt-5.4-mini",
         "-c",
-        "model_reasoning_effort='medium'",
+        'model_reasoning_effort="medium"',
         "-",
     ]
     assert captured["input"] == "do work"
     assert captured["cwd"] == tmp_path
     assert captured["capture_output"] is True
     assert captured["text"] is True
+    assert captured["encoding"] == "utf-8"
+    assert captured["errors"] == "replace"
 
 
 def test_codex_adapter_maps_spark_model_alias() -> None:
@@ -122,19 +124,75 @@ def test_codex_adapter_for_review_invokes_read_only_review(
         "--sandbox",
         "read-only",
         "-c",
-        "approval_policy='never'",
+        'approval_policy="never"',
     ]
     assert "--output-schema" in command
     assert command[-5:] == [
+        "--model",
+        "gpt-5.4-mini",
         "-c",
-        "model='gpt-5.4-mini'",
-        "-c",
-        "model_reasoning_effort='high'",
+        'model_reasoning_effort="high"',
         "-",
     ]
     assert captured["input"] == "review this"
     assert captured["cwd"] == tmp_path
     assert result.stdout == '{"verdict":"pass"}\n'
+
+
+def test_codex_adapter_escapes_config_values(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(
+        command: list[str],
+        **kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        captured["command"] = command
+        return subprocess.CompletedProcess(command, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    CodexAdapter(model="gpt'odd", effort="high'quote").for_review().exec("review", tmp_path)
+
+    assert captured["command"][-5:] == [
+        "--model",
+        "gpt'odd",
+        "-c",
+        'model_reasoning_effort="high\'quote"',
+        "-",
+    ]
+
+
+def test_codex_adapter_reports_missing_cli(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def raise_file_not_found(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise FileNotFoundError("codex")
+
+    monkeypatch.setattr(subprocess, "run", raise_file_not_found)
+
+    result = CodexAdapter().exec("prompt", tmp_path)
+
+    assert result.exit_code == 127
+    assert result.stderr == "codex CLI not found on PATH"
+
+
+def test_codex_adapter_reports_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def raise_timeout(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(cmd=["codex"], timeout=0.5)
+
+    monkeypatch.setattr(subprocess, "run", raise_timeout)
+
+    result = CodexAdapter().exec("prompt", tmp_path)
+
+    assert result.exit_code == 124
+    assert result.stderr == "codex CLI timed out after 0.5 seconds"
 
 
 def test_get_adapter_claude() -> None:
