@@ -23,7 +23,7 @@ REVIEW_OUTPUT_SCHEMA = {
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["severity", "message"],
+                "required": ["severity", "message", "file", "line", "recommendation"],
                 "properties": {
                     "severity": {"type": "string", "enum": ["info", "warning", "error"]},
                     "message": {"type": "string"},
@@ -103,8 +103,8 @@ class CodexAdapter:
                 str(cwd),
                 "--sandbox",
                 "read-only",
-                "--ask-for-approval",
-                "never",
+                "-c",
+                "approval_policy='never'",
             ]
             if schema_path is not None:
                 command.extend(["--output-schema", str(schema_path)])
@@ -116,8 +116,8 @@ class CodexAdapter:
                 str(cwd),
                 "--sandbox",
                 "workspace-write",
-                "--ask-for-approval",
-                "never",
+                "-c",
+                "approval_policy='never'",
             ]
 
         if self.model is not None:

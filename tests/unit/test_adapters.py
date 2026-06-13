@@ -10,6 +10,7 @@ from praetor.adapters import (
     get_adapter,
     resolve_reviewer_adapter,
 )
+from praetor.adapters.codex import REVIEW_OUTPUT_SCHEMA
 
 
 def test_mock_adapter_returns_configured_values() -> None:
@@ -61,8 +62,8 @@ def test_codex_adapter_exec_invokes_codex_exec(
         str(tmp_path),
         "--sandbox",
         "workspace-write",
-        "--ask-for-approval",
-        "never",
+        "-c",
+        "approval_policy='never'",
         "--model",
         "gpt-5.4-mini",
         "-c",
@@ -79,6 +80,12 @@ def test_codex_adapter_maps_spark_model_alias() -> None:
     adapter = CodexAdapter(model="spark")
 
     assert adapter.model == "gpt-5.3-codex-spark"
+
+
+def test_codex_review_schema_requires_nullable_finding_fields() -> None:
+    finding_schema = REVIEW_OUTPUT_SCHEMA["properties"]["findings"]["items"]
+
+    assert set(finding_schema["required"]) == set(finding_schema["properties"])
 
 
 def test_codex_adapter_for_review_invokes_read_only_review(
@@ -114,8 +121,8 @@ def test_codex_adapter_for_review_invokes_read_only_review(
         str(tmp_path),
         "--sandbox",
         "read-only",
-        "--ask-for-approval",
-        "never",
+        "-c",
+        "approval_policy='never'",
     ]
     assert "--output-schema" in command
     assert command[-5:] == [
