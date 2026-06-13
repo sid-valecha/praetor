@@ -2,8 +2,7 @@ from pathlib import Path
 from typing import Any
 
 from praetor._mcp_sdk import FastMCP
-from praetor.adapters import resolve_reviewer_adapter
-from praetor.adapters.claude import ClaudeCodeAdapter
+from praetor.adapters import get_adapter, resolve_reviewer_adapter
 from praetor.dag import compute_ready_set
 from praetor.merge_queue import merge_all_pending as merge_all_pending_core
 from praetor.merge_queue import merge_one_task
@@ -76,6 +75,7 @@ def add_task(
 @server.tool()
 def start_drain(
     repo_root: str,
+    adapter: str = "claude",
     max_parallel: int = 1,
     base_branch: str = "main",
     merge_strategy: str | None = None,
@@ -88,9 +88,10 @@ def start_drain(
     reviewer_model: str | None = None,
     reviewer_effort: str | None = None,
 ) -> dict[str, str]:
-    """Drain ready Praetor tasks using Claude Code."""
+    """Drain ready Praetor tasks using an agent adapter."""
+    agent_adapter = get_adapter(adapter, model=model, effort=effort)
     review_adapter = resolve_reviewer_adapter(
-        executor_adapter="claude",
+        executor_adapter=adapter,
         executor_model=model,
         executor_effort=effort,
         reviewer_adapter=reviewer_adapter,
@@ -99,7 +100,7 @@ def start_drain(
     )
     drain_queue(
         Path(repo_root),
-        ClaudeCodeAdapter(model=model, effort=effort),
+        agent_adapter,
         max_parallel=max_parallel,
         base_branch=base_branch,
         merge_strategy=merge_strategy,

@@ -62,7 +62,7 @@ praetor status
 praetor merge --all
 ```
 
-`praetor run --max-parallel 4` enables parallel mode. Ready tasks with `parallel_ok: true` may run concurrently; tasks with `parallel_ok: false` run alone after the active pool drains. The default is still `--max-parallel 1`, which preserves sequential v0 behavior. Add `--max-iterations N` or `--max-runtime SECONDS` to stop dispatching new tasks after a bounded amount of work. With the Claude adapter, pass `--model MODEL` and `--effort LEVEL` to select the Claude model and thinking budget for the executor. Praetor maps `--model spark` to Claude Code's `haiku` alias; other model strings pass through unchanged.
+`praetor run --max-parallel 4` enables parallel mode. Ready tasks with `parallel_ok: true` may run concurrently; tasks with `parallel_ok: false` run alone after the active pool drains. The default is still `--max-parallel 1`, which preserves sequential v0 behavior. Add `--max-iterations N` or `--max-runtime SECONDS` to stop dispatching new tasks after a bounded amount of work. With the Claude or Codex adapters, pass `--model MODEL` and `--effort LEVEL` to select the model and thinking budget for the executor. Praetor maps `--model spark` to Claude Code's `haiku` alias for Claude and `gpt-5.3-codex-spark` for Codex; other model strings pass through unchanged.
 
 Manual merge is the default in parallel mode. After an agent exits, Praetor runs the task's `verify` command in that task's worktree, runs the optional reviewer gate, commits the accepted worktree state to `praetor/<task-id>`, and marks the task `pending_merge`. `praetor status` shows `pending_merge` when accepted work is waiting for integration and `merge_failed` when an attempted merge or post-merge verification failed and needs human recovery.
 
@@ -104,7 +104,7 @@ Pass `--once` to get the same single-pass behavior while exercising the loop com
 | `praetor init` | none | Create `.praetor/` state in the current repository. |
 | `praetor add` | `--title`, `--depends-on`, `--verify`, `--parallel-ok/--no-parallel-ok`, `--merge-strategy`, `--review`, `--agent` | Create a task markdown file under `.praetor/tasks/`. |
 | `praetor status` | `--json` | Print task status. With `--json`, emit a JSON array (one object per task with all schema fields plus a derived `ready` bool) instead of the Rich table — for scripts, CI pipelines, and non-MCP agent callers. |
-| `praetor run` | `--adapter`, `--model`, `--effort`, `--reviewer-adapter`, `--reviewer-model`, `--reviewer-effort`, `--max-parallel`, `--base-branch`, `--merge-strategy`, `--max-iterations`, `--max-runtime` | Drain ready tasks with the selected agent adapter. `--max-parallel 1` runs sequentially; values greater than 1 use worktrees. `--model` and `--effort` are Claude executor options; reviewer options override the review route for that run. |
+| `praetor run` | `--adapter`, `--model`, `--effort`, `--reviewer-adapter`, `--reviewer-model`, `--reviewer-effort`, `--max-parallel`, `--base-branch`, `--merge-strategy`, `--max-iterations`, `--max-runtime` | Drain ready tasks with the selected agent adapter. `--max-parallel 1` runs sequentially; values greater than 1 use worktrees. `--model` and `--effort` are Claude/Codex executor options; reviewer options override the review route for that run. |
 | `praetor loop` | `--adapter`, `--model`, `--effort`, `--reviewer-adapter`, `--reviewer-model`, `--reviewer-effort`, `--max-parallel`, `--base-branch`, `--merge-strategy`, `--once`, `--poll-interval`, `--max-iterations`, `--max-runtime` | Drain once, then keep watching `.praetor/tasks/` and drain again when new work appears. Executor and reviewer model/effort flags follow the same semantics as `praetor run`. |
 | `praetor merge` | `TASK_ID...`, `--all`, `--retry`, `--base-branch` | Merge `pending_merge` tasks back to the base branch. With `--retry`, also retry `merge_failed` tasks. |
 | `praetor reset` | `TASK_ID...`, `--clean-worktree`, `--all-stale` | Reset failed, blocked, merge-failed, or stale-running tasks back to `pending`. |
@@ -127,9 +127,24 @@ The `--merge-strategy` flag is only valid in parallel mode; passing it with `--m
 
 ## Review Gate
 
-Set `review: lenient` or `review: strict` to run an adversarial reviewer after the agent exits and the verify command passes. By default, the reviewer uses the executor adapter/model/effort, but `praetor run` and `praetor loop` can override that route with `--reviewer-adapter`, `--reviewer-model`, and `--reviewer-effort`. The Claude adapter switches reviewer calls to read-only plan permission mode. The reviewer must return structured JSON. `pass` continues the normal completion or merge path. `needs_revision` marks the task `review_failed` and leaves dependents pending. `blocked` marks the task blocked and propagates that block to dependents.
+Set `review: lenient` or `review: strict` to run an adversarial reviewer after the agent exits and the verify command passes. Praetor has two roles: executor and reviewer. `--adapter` chooses who writes. Review starts a fresh independent checker; by default, that checker uses the same adapter/model/effort as the executor. Power users can route review to another adapter with `--reviewer-adapter`, `--reviewer-model`, and `--reviewer-effort`.
+
+```bash
+praetor run --adapter claude
+praetor run --adapter codex
+praetor run --adapter claude --reviewer-adapter codex
+praetor run --adapter codex --reviewer-adapter claude
+```
+
+The first two commands are the normal path: same-agent-family executor and fresh reviewer. The last two commands are optional cross-agent review. The Claude adapter switches reviewer calls to read-only plan permission mode. The Codex adapter uses read-only `codex exec` with a Praetor review output schema for reviewer calls. The reviewer must return structured JSON. `pass` continues the normal completion or merge path. `needs_revision` marks the task `review_failed` and leaves dependents pending. `blocked` marks the task blocked and propagates that block to dependents.
 
 Review always wins over auto-merge. If a task has `merge_strategy: auto` but the reviewer rejects it, Praetor does not commit or merge the work.
+
+### Optional Bridge Plugins
+
+Praetor does not require bridge plugins for native review. If you are working directly in Claude Code and want to call Codex from that host, use [`openai/codex-plugin-cc`](https://github.com/openai/codex-plugin-cc). If you are working directly in Codex and want to call Claude Code from that host, use `cc-plugin-codex`.
+
+Those plugins are host-workflow helpers. Praetor core uses native adapters and records executor/reviewer evidence in `.praetor/runs/*.json`.
 
 ## Run History
 

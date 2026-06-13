@@ -23,11 +23,13 @@ def get_adapter(
         msg = f"Unknown adapter '{name}'. Valid adapters: {valid_names}"
         raise ValueError(msg) from exc
 
-    if adapter_cls is not ClaudeCodeAdapter and (model is not None or effort is not None):
-        msg = "--model and --effort are only supported by the claude adapter"
+    if adapter_cls is MockAdapter and (model is not None or effort is not None):
+        msg = "--model and --effort are only supported by the claude and codex adapters"
         raise ValueError(msg)
     if adapter_cls is ClaudeCodeAdapter:
         return ClaudeCodeAdapter(model=model, effort=effort)
+    if adapter_cls is CodexAdapter:
+        return CodexAdapter(model=model, effort=effort)
 
     return adapter_cls()
 

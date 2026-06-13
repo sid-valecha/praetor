@@ -144,6 +144,51 @@ def test_loop_passes_reviewer_adapter_through_options(
     assert getattr(reviewer, "effort") == "high"
 
 
+def test_loop_routes_executor_and_reviewer_as_roles(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    captured: dict[str, object] = {}
+
+    def fake_loop_queue(
+        repo_root: Path, adapter: object, options: object, **kwargs: object
+    ) -> None:
+        captured["repo_root"] = repo_root
+        captured["adapter"] = adapter
+        captured["options"] = options
+        captured.update(kwargs)
+
+    monkeypatch.setattr("praetor.commands.loop.loop_queue", fake_loop_queue)
+
+    result = runner.invoke(
+        app,
+        [
+            "loop",
+            "--once",
+            "--adapter",
+            "codex",
+            "--model",
+            "spark",
+            "--effort",
+            "medium",
+            "--reviewer-adapter",
+            "claude",
+            "--reviewer-model",
+            "opus",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert getattr(captured["adapter"], "name") == "codex"
+    assert getattr(captured["adapter"], "model") == "gpt-5.3-codex-spark"
+    assert getattr(captured["adapter"], "effort") == "medium"
+    reviewer = captured["options"].reviewer_adapter
+    assert getattr(reviewer, "name") == "claude"
+    assert getattr(reviewer, "model") == "opus"
+
+
 def test_loop_rejects_invalid_max_review_retries(tmp_path: Path, monkeypatch) -> None:
     init_workspace(tmp_path)
     monkeypatch.chdir(tmp_path)

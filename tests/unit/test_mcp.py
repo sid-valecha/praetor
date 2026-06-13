@@ -225,6 +225,28 @@ def test_start_drain_passes_model_and_effort_to_claude_adapter(
     assert getattr(adapter, "effort") == "low"
 
 
+def test_start_drain_accepts_executor_adapter_role(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_drain_queue(repo_root: Path, adapter: object, **kwargs: object) -> None:
+        captured["repo_root"] = repo_root
+        captured["adapter"] = adapter
+        captured.update(kwargs)
+
+    monkeypatch.setattr("praetor.mcp.drain_queue", fake_drain_queue)
+
+    result = start_drain(str(tmp_path), adapter="codex", model="spark", effort="medium")
+
+    assert result == {"status": "completed"}
+    adapter = captured["adapter"]
+    assert getattr(adapter, "name") == "codex"
+    assert getattr(adapter, "model") == "gpt-5.3-codex-spark"
+    assert getattr(adapter, "effort") == "medium"
+
+
 def test_start_drain_passes_max_review_retries_to_drain_queue(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -271,6 +293,37 @@ def test_start_drain_passes_reviewer_adapter_to_drain_queue(
     reviewer = captured["reviewer_adapter"]
     assert getattr(reviewer, "model") == "opus"
     assert getattr(reviewer, "effort") == "high"
+
+
+def test_start_drain_routes_reviewer_as_independent_role(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_drain_queue(repo_root: Path, adapter: object, **kwargs: object) -> None:
+        captured["repo_root"] = repo_root
+        captured["adapter"] = adapter
+        captured.update(kwargs)
+
+    monkeypatch.setattr("praetor.mcp.drain_queue", fake_drain_queue)
+
+    result = start_drain(
+        str(tmp_path),
+        model="haiku",
+        effort="low",
+        reviewer_adapter="codex",
+        reviewer_model="spark",
+        reviewer_effort="medium",
+    )
+
+    assert result == {"status": "completed"}
+    assert getattr(captured["adapter"], "name") == "claude"
+    assert getattr(captured["adapter"], "model") == "haiku"
+    reviewer = captured["reviewer_adapter"]
+    assert getattr(reviewer, "name") == "codex"
+    assert getattr(reviewer, "model") == "gpt-5.3-codex-spark"
+    assert getattr(reviewer, "effort") == "medium"
 
 
 def _make_task(
