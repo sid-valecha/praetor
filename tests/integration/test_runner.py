@@ -289,6 +289,25 @@ def test_explicit_reviewer_adapter_overrides_executor_review_adapter(tmp_path: P
     assert run.task_runs[0].review.reviewer_adapter == "sequence"
 
 
+def test_named_executor_and_reviewer_are_recorded_as_roles(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+    write_task(tmp_path, make_task("A", verify="true", review="strict"))
+    executor = SequenceAdapter(
+        [TaskResult(exit_code=0, stdout="implemented\n", stderr="", duration_ms=1)]
+    )
+    executor.name = "codex"
+    reviewer = SequenceAdapter([_review_result("pass")])
+    reviewer.name = "claude"
+
+    drain_queue(tmp_path, executor, reviewer_adapter=reviewer)
+
+    task = get_task(tmp_path, "A")
+    run = latest_run(tmp_path)
+    assert task.status is TaskStatus.done
+    assert run.task_runs[0].adapter == "codex"
+    assert run.task_runs[0].review.reviewer_adapter == "claude"
+
+
 def test_run_history_records_executor_and_reviewer_model_metadata(tmp_path: Path) -> None:
     init_workspace(tmp_path)
     write_task(tmp_path, make_task("A", verify="true", review="strict"))

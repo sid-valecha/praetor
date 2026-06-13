@@ -49,14 +49,14 @@ def loop_command(
         str | None,
         typer.Option(
             "--model",
-            help="Claude model name to pass through to the claude adapter.",
+            help="Model name to pass through to the claude or codex adapter.",
         ),
     ] = None,
     effort: Annotated[
         str | None,
         typer.Option(
             "--effort",
-            help="Claude thinking/effort level to pass through to the claude adapter.",
+            help="Thinking/effort level to pass through to the claude or codex adapter.",
         ),
     ] = None,
     once: Annotated[

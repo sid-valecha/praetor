@@ -10,6 +10,7 @@ from praetor.adapters import (
     get_adapter,
     resolve_reviewer_adapter,
 )
+from praetor.adapters.codex import REVIEW_OUTPUT_SCHEMA
 
 
 def test_mock_adapter_returns_configured_values() -> None:
@@ -34,9 +35,164 @@ def test_mock_adapter_defaults() -> None:
     assert result.diff is None
 
 
-def test_codex_adapter_raises_not_implemented() -> None:
-    with pytest.raises(NotImplementedError, match="CodexAdapter is not implemented until v1.3"):
-        CodexAdapter().exec("prompt", Path.cwd())
+def test_codex_adapter_exec_invokes_codex_exec(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(
+        command: list[str],
+        **kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        captured["command"] = command
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(command, returncode=0, stdout="done\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = CodexAdapter(model="gpt-5.4-mini", effort="medium").exec("do work", tmp_path)
+
+    assert result.exit_code == 0
+    assert result.stdout == "done\n"
+    assert captured["command"] == [
+        "codex",
+        "exec",
+        "--cd",
+        str(tmp_path),
+        "--sandbox",
+        "workspace-write",
+        "-c",
+        'approval_policy="never"',
+        "--model",
+        "gpt-5.4-mini",
+        "-c",
+        'model_reasoning_effort="medium"',
+        "-",
+    ]
+    assert captured["input"] == "do work"
+    assert captured["cwd"] == tmp_path
+    assert captured["capture_output"] is True
+    assert captured["text"] is True
+    assert captured["encoding"] == "utf-8"
+    assert captured["errors"] == "replace"
+
+
+def test_codex_adapter_maps_spark_model_alias() -> None:
+    adapter = CodexAdapter(model="spark")
+
+    assert adapter.model == "gpt-5.3-codex-spark"
+
+
+def test_codex_review_schema_requires_nullable_finding_fields() -> None:
+    finding_schema = REVIEW_OUTPUT_SCHEMA["properties"]["findings"]["items"]
+
+    assert set(finding_schema["required"]) == set(finding_schema["properties"])
+
+
+def test_codex_adapter_for_review_invokes_read_only_review(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(
+        command: list[str],
+        **kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        captured["command"] = command
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(
+            command,
+            returncode=0,
+            stdout='{"verdict":"pass"}\n',
+            stderr="",
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    adapter = CodexAdapter(model="gpt-5.4-mini", effort="high").for_review()
+    result = adapter.exec("review this", tmp_path)
+
+    assert result.exit_code == 0
+    command = captured["command"]
+    assert command[:8] == [
+        "codex",
+        "exec",
+        "--cd",
+        str(tmp_path),
+        "--sandbox",
+        "read-only",
+        "-c",
+        'approval_policy="never"',
+    ]
+    assert "--output-schema" in command
+    assert command[-5:] == [
+        "--model",
+        "gpt-5.4-mini",
+        "-c",
+        'model_reasoning_effort="high"',
+        "-",
+    ]
+    assert captured["input"] == "review this"
+    assert captured["cwd"] == tmp_path
+    assert result.stdout == '{"verdict":"pass"}\n'
+
+
+def test_codex_adapter_escapes_config_values(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(
+        command: list[str],
+        **kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        captured["command"] = command
+        return subprocess.CompletedProcess(command, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    CodexAdapter(model="gpt'odd", effort="high'quote").for_review().exec("review", tmp_path)
+
+    assert captured["command"][-5:] == [
+        "--model",
+        "gpt'odd",
+        "-c",
+        'model_reasoning_effort="high\'quote"',
+        "-",
+    ]
+
+
+def test_codex_adapter_reports_missing_cli(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def raise_file_not_found(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise FileNotFoundError("codex")
+
+    monkeypatch.setattr(subprocess, "run", raise_file_not_found)
+
+    result = CodexAdapter().exec("prompt", tmp_path)
+
+    assert result.exit_code == 127
+    assert result.stderr == "codex CLI not found on PATH"
+
+
+def test_codex_adapter_reports_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def raise_timeout(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(cmd=["codex"], timeout=0.5)
+
+    monkeypatch.setattr(subprocess, "run", raise_timeout)
+
+    result = CodexAdapter().exec("prompt", tmp_path)
+
+    assert result.exit_code == 124
+    assert result.stderr == "codex CLI timed out after 0.5 seconds"
 
 
 def test_get_adapter_claude() -> None:
@@ -58,12 +214,20 @@ def test_get_adapter_claude_maps_spark_to_haiku() -> None:
     assert adapter.model == "haiku"
 
 
+def test_get_adapter_codex_applies_model_and_effort() -> None:
+    adapter = get_adapter("codex", model="spark", effort="high")
+
+    assert isinstance(adapter, CodexAdapter)
+    assert adapter.model == "gpt-5.3-codex-spark"
+    assert adapter.effort == "high"
+
+
 def test_get_adapter_mock() -> None:
     assert isinstance(get_adapter("mock"), MockAdapter)
 
 
-def test_get_adapter_rejects_model_for_non_claude() -> None:
-    with pytest.raises(ValueError, match="only supported by the claude adapter"):
+def test_get_adapter_rejects_model_for_mock() -> None:
+    with pytest.raises(ValueError, match="only supported by the claude and codex adapters"):
         get_adapter("mock", model="haiku")
 
 
@@ -109,8 +273,8 @@ def test_resolve_reviewer_adapter_does_not_inherit_across_adapter_names() -> Non
     assert isinstance(reviewer, MockAdapter)
 
 
-def test_resolve_reviewer_adapter_rejects_model_for_non_claude_reviewer() -> None:
-    with pytest.raises(ValueError, match="only supported by the claude adapter"):
+def test_resolve_reviewer_adapter_rejects_model_for_mock_reviewer() -> None:
+    with pytest.raises(ValueError, match="only supported by the claude and codex adapters"):
         resolve_reviewer_adapter(
             executor_adapter="mock",
             executor_model=None,

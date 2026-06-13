@@ -195,8 +195,9 @@ Ship as plain markdown in `skills/`. Claude Code picks them up when the plugin i
 - Default reviewer remains same adapter/model/effort as executor unless reviewer options are supplied
 - Same-provider adversarial review remains first-class: the checker can be a fresh invocation of the same agent/provider when the user only has one subscription
 - Cross-model review is the recommended stronger posture when available, not a requirement
-- Codex-as-reviewer is an optional reviewer route and still comes before Codex-as-executor
-- Real Codex executor adapter comes later, after sandbox/worktree behavior is proven
+- Native Codex adapter path uses local `codex exec` for execution and read-only schema-bound review
+- Bridge plugins (`openai/codex-plugin-cc`, `cc-plugin-codex`) are optional host-workflow helpers, not Praetor core dependencies
+- Codex-as-reviewer is an optional reviewer route; Codex executor dogfood must prove sandbox/worktree behavior before being treated as a default recommendation
 - Per-task agent selection via existing `agent:` field remains a later runtime-routing step
 - Strong path: Claude implements and Codex reviews first; accessible path: same-provider executor and reviewer with separate prompts/invocations
 - Preserve maker/checker separation in run history so users can audit which agent wrote and which agent reviewed
