@@ -6,7 +6,13 @@ import subprocess
 import pytest
 
 from praetor import worktree as worktree_module
-from praetor.worktree import WorktreeError, create_worktree, list_worktrees, remove_worktree
+from praetor.worktree import (
+    WorktreeError,
+    branch_for_task,
+    create_worktree,
+    list_worktrees,
+    remove_worktree,
+)
 
 
 @pytest.fixture
@@ -60,6 +66,13 @@ def test_create_worktree_duplicate_branch(scratch_repo: Path) -> None:
 
     with pytest.raises(WorktreeError, match="Worktree branch already exists"):
         create_worktree("task-002", scratch_repo)
+
+
+def test_create_worktree_rejects_path_escape_task_id(scratch_repo: Path) -> None:
+    with pytest.raises(WorktreeError, match="Invalid task id"):
+        create_worktree("../escape", scratch_repo)
+
+    assert not (scratch_repo / ".praetor" / "escape").exists()
 
 
 def test_list_worktrees_empty(scratch_repo: Path) -> None:
@@ -181,6 +194,17 @@ def test_create_worktree_explicit_sha(scratch_repo: Path) -> None:
 
     assert worktree.base_sha == first_sha
     assert _git(worktree.path, "rev-parse", "HEAD") == first_sha
+
+
+def test_branch_for_task_rejects_invalid_metadata_branch(scratch_repo: Path) -> None:
+    worktree = create_worktree("task-meta-branch", scratch_repo)
+    metadata_path = worktree.path / ".praetor-meta.json"
+    metadata = json.loads(metadata_path.read_text())
+    metadata["branch"] = "-danger"
+    metadata_path.write_text(json.dumps(metadata))
+
+    with pytest.raises(WorktreeError, match="Invalid worktree branch"):
+        branch_for_task("task-meta-branch", scratch_repo)
 
 
 def _git(cwd: Path, *args: str) -> str:

@@ -169,12 +169,29 @@ def test_merge_all_pending_returns_structured_results(tmp_path: Path) -> None:
 
 def test_get_logs_returns_empty_for_missing_log(tmp_path: Path) -> None:
     init_workspace(tmp_path)
+    _write_task(tmp_path, _make_task("task-a", TaskStatus.pending))
 
     assert get_logs(str(tmp_path), "task-a") == {
         "task_id": "task-a",
         "log": "",
         "review_failure": None,
     }
+
+
+def test_get_logs_rejects_unknown_task_even_if_orphan_log_exists(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+    (tmp_path / ".praetor" / "logs" / "missing.log").write_text("orphan log\n")
+
+    with pytest.raises(KeyError, match="Task not found: missing"):
+        get_logs(str(tmp_path), "missing")
+
+
+def test_get_logs_rejects_path_escape_task_id(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+    (tmp_path / ".praetor" / "evil.log").write_text("secret\n")
+
+    with pytest.raises(ValueError, match="Invalid task id"):
+        get_logs(str(tmp_path), "../evil")
 
 
 def test_get_logs_exposes_review_failure_for_review_failed_task(tmp_path: Path) -> None:

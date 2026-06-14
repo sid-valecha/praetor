@@ -1,9 +1,36 @@
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
+import re
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
+
+MAX_TASK_ID_LENGTH = 100
+_TASK_ID_RE = re.compile(r"^[a-z0-9_][a-z0-9_-]{0,99}$")
+
+
+def validate_task_id(value: str) -> str:
+    if not isinstance(value, str):
+        msg = "Invalid task id: must be a string"
+        raise ValueError(msg)
+    if not value:
+        msg = "Invalid task id: must not be empty"
+        raise ValueError(msg)
+    if len(value) > MAX_TASK_ID_LENGTH:
+        msg = f"Invalid task id: must be at most {MAX_TASK_ID_LENGTH} characters"
+        raise ValueError(msg)
+    if (
+        value.startswith("-")
+        or value.startswith("/")
+        or "\\" in value
+        or "/" in value
+        or ".." in value
+        or not _TASK_ID_RE.fullmatch(value)
+    ):
+        msg = "Invalid task id: use lowercase letters, numbers, hyphens, and underscores only"
+        raise ValueError(msg)
+    return value
 
 
 class TaskStatus(StrEnum):
@@ -35,6 +62,11 @@ class Task(BaseModel):
     context_files: list[str] = Field(default_factory=list)
     created: datetime
     body: str = ""
+
+    @field_validator("id")
+    @classmethod
+    def id_must_be_safe(cls, value: str) -> str:
+        return validate_task_id(value)
 
     @field_validator("created")
     @classmethod

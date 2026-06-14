@@ -113,7 +113,7 @@ def test_run_once_returns_false_on_empty_queue(tmp_path: Path) -> None:
 
 
 def test_render_task_prompt_includes_non_interactive_edit_authority() -> None:
-    task = make_task("A")
+    task = make_task("task-a")
     task.body = "# Update docs\n\nEdit Handoff.md."
 
     prompt = render_task_prompt(
@@ -135,105 +135,105 @@ def test_render_task_prompt_includes_non_interactive_edit_authority() -> None:
 
 def test_run_once_processes_one_task(tmp_path: Path) -> None:
     init_workspace(tmp_path)
-    write_task(tmp_path, make_task("A"))
+    write_task(tmp_path, make_task("task-a"))
 
     run_once(tmp_path, MockAdapter(exit_code=0))
 
-    assert get_task(tmp_path, "A").status is TaskStatus.done
+    assert get_task(tmp_path, "task-a").status is TaskStatus.done
 
 
 def test_run_once_returns_true_when_task_processed(tmp_path: Path) -> None:
     init_workspace(tmp_path)
-    write_task(tmp_path, make_task("A"))
+    write_task(tmp_path, make_task("task-a"))
 
     assert run_once(tmp_path, MockAdapter(exit_code=0)) is True
 
 
 def test_drain_queue_linear_three_tasks(tmp_path: Path) -> None:
     init_workspace(tmp_path)
-    write_task(tmp_path, make_task("A", offset=0))
-    write_task(tmp_path, make_task("B", offset=1, depends_on=["A"]))
-    write_task(tmp_path, make_task("C", offset=2, depends_on=["B"]))
+    write_task(tmp_path, make_task("task-a", offset=0))
+    write_task(tmp_path, make_task("task-b", offset=1, depends_on=["task-a"]))
+    write_task(tmp_path, make_task("task-c", offset=2, depends_on=["task-b"]))
 
     drain_queue(tmp_path, MockAdapter(exit_code=0))
 
-    assert get_task(tmp_path, "A").status is TaskStatus.done
-    assert get_task(tmp_path, "B").status is TaskStatus.done
-    assert get_task(tmp_path, "C").status is TaskStatus.done
+    assert get_task(tmp_path, "task-a").status is TaskStatus.done
+    assert get_task(tmp_path, "task-b").status is TaskStatus.done
+    assert get_task(tmp_path, "task-c").status is TaskStatus.done
 
 
 def test_drain_queue_max_parallel_one_does_not_create_worktrees(tmp_path: Path) -> None:
     init_workspace(tmp_path)
-    write_task(tmp_path, make_task("A"))
+    write_task(tmp_path, make_task("task-a"))
 
     drain_queue(tmp_path, MockAdapter(exit_code=0), max_parallel=1)
 
     worktrees_dir = tmp_path / ".praetor" / "worktrees"
     assert not worktrees_dir.exists() or list(worktrees_dir.iterdir()) == []
-    assert get_task(tmp_path, "A").status is TaskStatus.done
+    assert get_task(tmp_path, "task-a").status is TaskStatus.done
 
 
 def test_task_failure_marks_failed_and_propagates_blocked(tmp_path: Path) -> None:
     init_workspace(tmp_path)
-    write_task(tmp_path, make_task("A", offset=0))
-    write_task(tmp_path, make_task("B", offset=1, depends_on=["A"]))
+    write_task(tmp_path, make_task("task-a", offset=0))
+    write_task(tmp_path, make_task("task-b", offset=1, depends_on=["task-a"]))
 
     run_once(tmp_path, MockAdapter(exit_code=1))
 
-    assert get_task(tmp_path, "A").status is TaskStatus.failed
-    assert get_task(tmp_path, "B").status is TaskStatus.blocked
+    assert get_task(tmp_path, "task-a").status is TaskStatus.failed
+    assert get_task(tmp_path, "task-b").status is TaskStatus.blocked
 
 
 def test_verify_failure_marks_failed(tmp_path: Path) -> None:
     init_workspace(tmp_path)
-    write_task(tmp_path, make_task("A", verify="false"))
+    write_task(tmp_path, make_task("task-a", verify="false"))
 
     run_once(tmp_path, MockAdapter(exit_code=0))
 
-    assert get_task(tmp_path, "A").status is TaskStatus.failed
+    assert get_task(tmp_path, "task-a").status is TaskStatus.failed
 
 
 def test_verify_success_marks_done(tmp_path: Path) -> None:
     init_workspace(tmp_path)
-    write_task(tmp_path, make_task("A", verify="true"))
+    write_task(tmp_path, make_task("task-a", verify="true"))
 
     run_once(tmp_path, MockAdapter(exit_code=0))
 
-    assert get_task(tmp_path, "A").status is TaskStatus.done
+    assert get_task(tmp_path, "task-a").status is TaskStatus.done
 
 
 def test_log_file_written(tmp_path: Path) -> None:
     init_workspace(tmp_path)
-    write_task(tmp_path, make_task("A"))
+    write_task(tmp_path, make_task("task-a"))
 
     run_once(tmp_path, MockAdapter(exit_code=0, stdout="task output\n"))
 
-    log_path = tmp_path / ".praetor" / "logs" / "A.log"
+    log_path = tmp_path / ".praetor" / "logs" / "task-a.log"
     assert log_path.is_file()
     assert log_path.read_text()
 
 
 def test_resume_skips_done_tasks(tmp_path: Path) -> None:
     init_workspace(tmp_path)
-    write_task(tmp_path, make_task("A", status=TaskStatus.done))
+    write_task(tmp_path, make_task("task-a", status=TaskStatus.done))
 
     drain_queue(tmp_path, MockAdapter(exit_code=1))
 
-    assert get_task(tmp_path, "A").status is TaskStatus.done
+    assert get_task(tmp_path, "task-a").status is TaskStatus.done
 
 
 def test_drain_queue_writes_run_history(tmp_path: Path) -> None:
     init_workspace(tmp_path)
     config_path = tmp_path / ".praetor" / "config.toml"
     config_path.write_text("max_review_retries = 2\n")
-    write_task(tmp_path, make_task("A", verify="true"))
+    write_task(tmp_path, make_task("task-a", verify="true"))
 
     drain_queue(tmp_path, MockAdapter(exit_code=0))
 
     run = latest_run(tmp_path)
     assert run is not None
     assert run.status == "completed"
-    assert run.task_runs[0].task_id == "A"
+    assert run.task_runs[0].task_id == "task-a"
     assert run.task_runs[0].status == "done"
     assert run.task_runs[0].verify_exit_code == 0
     assert run.max_review_retries == 2
@@ -241,7 +241,7 @@ def test_drain_queue_writes_run_history(tmp_path: Path) -> None:
 
 def test_reviewer_pass_allows_completion(tmp_path: Path) -> None:
     init_workspace(tmp_path)
-    write_task(tmp_path, make_task("A", verify="true", review="strict"))
+    write_task(tmp_path, make_task("task-a", verify="true", review="strict"))
     adapter = SequenceAdapter(
         [
             TaskResult(exit_code=0, stdout="implemented\n", stderr="", duration_ms=1),
@@ -251,20 +251,20 @@ def test_reviewer_pass_allows_completion(tmp_path: Path) -> None:
 
     drain_queue(tmp_path, adapter)
 
-    assert get_task(tmp_path, "A").status is TaskStatus.done
+    assert get_task(tmp_path, "task-a").status is TaskStatus.done
     run = latest_run(tmp_path)
     assert run.task_runs[0].review.verdict == "pass"
-    assert "Praetor review:" in (tmp_path / ".praetor" / "logs" / "A.log").read_text()
+    assert "Praetor review:" in (tmp_path / ".praetor" / "logs" / "task-a.log").read_text()
 
 
 def test_reviewer_uses_review_adapter_when_available(tmp_path: Path) -> None:
     init_workspace(tmp_path)
-    write_task(tmp_path, make_task("A", verify="true", review="strict"))
+    write_task(tmp_path, make_task("task-a", verify="true", review="strict"))
     adapter = ReviewRoutingAdapter()
 
     drain_queue(tmp_path, adapter)
 
-    assert get_task(tmp_path, "A").status is TaskStatus.done
+    assert get_task(tmp_path, "task-a").status is TaskStatus.done
     assert len(adapter.executor_prompts) == 1
     assert len(adapter.review_prompts) == 1
     run = latest_run(tmp_path)
@@ -274,13 +274,13 @@ def test_reviewer_uses_review_adapter_when_available(tmp_path: Path) -> None:
 
 def test_explicit_reviewer_adapter_overrides_executor_review_adapter(tmp_path: Path) -> None:
     init_workspace(tmp_path)
-    write_task(tmp_path, make_task("A", verify="true", review="strict"))
+    write_task(tmp_path, make_task("task-a", verify="true", review="strict"))
     executor = ReviewRoutingAdapter()
     reviewer = SequenceAdapter([_review_result("pass")])
 
     drain_queue(tmp_path, executor, reviewer_adapter=reviewer)
 
-    assert get_task(tmp_path, "A").status is TaskStatus.done
+    assert get_task(tmp_path, "task-a").status is TaskStatus.done
     assert len(executor.executor_prompts) == 1
     assert executor.review_prompts == []
     assert len(reviewer.prompts) == 1
@@ -291,7 +291,7 @@ def test_explicit_reviewer_adapter_overrides_executor_review_adapter(tmp_path: P
 
 def test_named_executor_and_reviewer_are_recorded_as_roles(tmp_path: Path) -> None:
     init_workspace(tmp_path)
-    write_task(tmp_path, make_task("A", verify="true", review="strict"))
+    write_task(tmp_path, make_task("task-a", verify="true", review="strict"))
     executor = SequenceAdapter(
         [TaskResult(exit_code=0, stdout="implemented\n", stderr="", duration_ms=1)]
     )
@@ -301,7 +301,7 @@ def test_named_executor_and_reviewer_are_recorded_as_roles(tmp_path: Path) -> No
 
     drain_queue(tmp_path, executor, reviewer_adapter=reviewer)
 
-    task = get_task(tmp_path, "A")
+    task = get_task(tmp_path, "task-a")
     run = latest_run(tmp_path)
     assert task.status is TaskStatus.done
     assert run.task_runs[0].adapter == "codex"
@@ -310,7 +310,7 @@ def test_named_executor_and_reviewer_are_recorded_as_roles(tmp_path: Path) -> No
 
 def test_run_history_records_executor_and_reviewer_model_metadata(tmp_path: Path) -> None:
     init_workspace(tmp_path)
-    write_task(tmp_path, make_task("A", verify="true", review="strict"))
+    write_task(tmp_path, make_task("task-a", verify="true", review="strict"))
     executor = SequenceAdapter(
         [TaskResult(exit_code=0, stdout="implemented\n", stderr="", duration_ms=1)]
     )
@@ -334,8 +334,8 @@ def test_reviewer_needs_revision_marks_review_failed_without_blocking_dependents
     tmp_path: Path,
 ) -> None:
     init_workspace(tmp_path)
-    write_task(tmp_path, make_task("A", verify="true", review="strict"))
-    write_task(tmp_path, make_task("B", offset=1, depends_on=["A"]))
+    write_task(tmp_path, make_task("task-a", verify="true", review="strict"))
+    write_task(tmp_path, make_task("task-b", offset=1, depends_on=["task-a"]))
     adapter = SequenceAdapter(
         [
             TaskResult(exit_code=0, stdout="implemented\n", stderr="", duration_ms=1),
@@ -345,8 +345,8 @@ def test_reviewer_needs_revision_marks_review_failed_without_blocking_dependents
 
     drain_queue(tmp_path, adapter, max_review_retries=0)
 
-    assert get_task(tmp_path, "A").status is TaskStatus.review_failed
-    assert get_task(tmp_path, "B").status is TaskStatus.pending
+    assert get_task(tmp_path, "task-a").status is TaskStatus.review_failed
+    assert get_task(tmp_path, "task-b").status is TaskStatus.pending
     assert latest_run(tmp_path).task_runs[0].review.verdict == "needs_revision"
 
 
@@ -354,7 +354,7 @@ def test_reviewer_needs_revision_retries_once_and_injects_feedback(
     tmp_path: Path,
 ) -> None:
     init_workspace(tmp_path)
-    write_task(tmp_path, make_task("A", verify="true", review="strict"))
+    write_task(tmp_path, make_task("task-a", verify="true", review="strict"))
     adapter = RetryReviewAdapter(
         executor_results=[
             TaskResult(exit_code=0, stdout="first attempt\n", stderr="", duration_ms=1),
@@ -381,7 +381,7 @@ def test_reviewer_needs_revision_retries_once_and_injects_feedback(
 
     drain_queue(tmp_path, adapter)
 
-    task = get_task(tmp_path, "A")
+    task = get_task(tmp_path, "task-a")
     assert task.status is TaskStatus.done
     assert task.retry == 1
     assert len(adapter.executor_prompts) == 2
@@ -391,7 +391,7 @@ def test_reviewer_needs_revision_retries_once_and_injects_feedback(
     assert "missing validation for empty input" in retry_prompt
     assert "validator.py:12" in retry_prompt
     assert "reject empty input before saving" in retry_prompt
-    assert "# Task A" in retry_prompt
+    assert "# Task task-a" in retry_prompt
     assert "Verify command: true" in retry_prompt
 
 
@@ -399,7 +399,7 @@ def test_manual_reset_after_pass_does_not_inject_resolved_review_feedback(
     tmp_path: Path,
 ) -> None:
     init_workspace(tmp_path)
-    write_task(tmp_path, make_task("A", verify="true", review="strict"))
+    write_task(tmp_path, make_task("task-a", verify="true", review="strict"))
     first_adapter = RetryReviewAdapter(
         executor_results=[
             TaskResult(exit_code=0, stdout="first attempt\n", stderr="", duration_ms=1),
@@ -421,9 +421,9 @@ def test_manual_reset_after_pass_does_not_inject_resolved_review_feedback(
         ],
     )
     drain_queue(tmp_path, first_adapter)
-    assert get_task(tmp_path, "A").status is TaskStatus.done
+    assert get_task(tmp_path, "task-a").status is TaskStatus.done
 
-    update_task_status(tmp_path, "A", TaskStatus.pending)
+    update_task_status(tmp_path, "task-a", TaskStatus.pending)
     second_adapter = RetryReviewAdapter(
         executor_results=[
             TaskResult(exit_code=0, stdout="fresh attempt\n", stderr="", duration_ms=1),
@@ -434,7 +434,7 @@ def test_manual_reset_after_pass_does_not_inject_resolved_review_feedback(
     )
     drain_queue(tmp_path, second_adapter)
 
-    assert get_task(tmp_path, "A").status is TaskStatus.done
+    assert get_task(tmp_path, "task-a").status is TaskStatus.done
     prompt = second_adapter.executor_prompts[0]
     assert "Latest reviewer feedback" not in prompt
     assert "old criticism" not in prompt
@@ -445,7 +445,7 @@ def test_reviewer_retry_exhaustion_leaves_review_failed_with_retry_count(
     tmp_path: Path,
 ) -> None:
     init_workspace(tmp_path)
-    write_task(tmp_path, make_task("A", verify="true", review="strict"))
+    write_task(tmp_path, make_task("task-a", verify="true", review="strict"))
     adapter = RetryReviewAdapter(
         executor_results=[
             TaskResult(exit_code=0, stdout="first attempt\n", stderr="", duration_ms=1),
@@ -459,13 +459,13 @@ def test_reviewer_retry_exhaustion_leaves_review_failed_with_retry_count(
 
     drain_queue(tmp_path, adapter)
 
-    task = get_task(tmp_path, "A")
+    task = get_task(tmp_path, "task-a")
     assert task.status is TaskStatus.review_failed
     assert task.retry == 1
     run = latest_run(tmp_path)
     assert [task_run.status for task_run in run.task_runs] == ["pending", "review_failed"]
     assert run.task_runs[-1].review.summary == "still broken"
-    log_text = (tmp_path / ".praetor" / "logs" / "A.log").read_text()
+    log_text = (tmp_path / ".praetor" / "logs" / "task-a.log").read_text()
     assert "still broken" in log_text
 
 
@@ -473,7 +473,7 @@ def test_max_review_retries_zero_disables_automatic_review_retry(
     tmp_path: Path,
 ) -> None:
     init_workspace(tmp_path)
-    write_task(tmp_path, make_task("A", verify="true", review="strict"))
+    write_task(tmp_path, make_task("task-a", verify="true", review="strict"))
     adapter = RetryReviewAdapter(
         executor_results=[
             TaskResult(exit_code=0, stdout="first attempt\n", stderr="", duration_ms=1),
@@ -485,7 +485,7 @@ def test_max_review_retries_zero_disables_automatic_review_retry(
 
     drain_queue(tmp_path, adapter, max_review_retries=0)
 
-    task = get_task(tmp_path, "A")
+    task = get_task(tmp_path, "task-a")
     assert task.status is TaskStatus.review_failed
     assert task.retry == 0
     assert len(adapter.executor_prompts) == 1
@@ -493,7 +493,7 @@ def test_max_review_retries_zero_disables_automatic_review_retry(
 
 def test_review_retry_respects_max_iterations(tmp_path: Path) -> None:
     init_workspace(tmp_path)
-    write_task(tmp_path, make_task("A", verify="true", review="strict"))
+    write_task(tmp_path, make_task("task-a", verify="true", review="strict"))
     adapter = RetryReviewAdapter(
         executor_results=[
             TaskResult(exit_code=0, stdout="first attempt\n", stderr="", duration_ms=1),
@@ -507,7 +507,7 @@ def test_review_retry_respects_max_iterations(tmp_path: Path) -> None:
 
     drain_queue(tmp_path, adapter, max_iterations=1)
 
-    task = get_task(tmp_path, "A")
+    task = get_task(tmp_path, "task-a")
     assert task.status is TaskStatus.pending
     assert task.retry == 1
     assert len(adapter.executor_prompts) == 1
@@ -515,15 +515,15 @@ def test_review_retry_respects_max_iterations(tmp_path: Path) -> None:
 
     drain_queue(tmp_path, adapter, max_iterations=2)
 
-    assert get_task(tmp_path, "A").status is TaskStatus.done
+    assert get_task(tmp_path, "task-a").status is TaskStatus.done
     assert len(adapter.executor_prompts) == 2
     assert latest_run(tmp_path).status == "completed"
 
 
 def test_reviewer_blocked_marks_blocked_and_propagates(tmp_path: Path) -> None:
     init_workspace(tmp_path)
-    write_task(tmp_path, make_task("A", verify="true", review="strict"))
-    write_task(tmp_path, make_task("B", offset=1, depends_on=["A"]))
+    write_task(tmp_path, make_task("task-a", verify="true", review="strict"))
+    write_task(tmp_path, make_task("task-b", offset=1, depends_on=["task-a"]))
     adapter = SequenceAdapter(
         [
             TaskResult(exit_code=0, stdout="implemented\n", stderr="", duration_ms=1),
@@ -533,31 +533,31 @@ def test_reviewer_blocked_marks_blocked_and_propagates(tmp_path: Path) -> None:
 
     drain_queue(tmp_path, adapter)
 
-    assert get_task(tmp_path, "A").status is TaskStatus.blocked
-    assert get_task(tmp_path, "B").status is TaskStatus.blocked
+    assert get_task(tmp_path, "task-a").status is TaskStatus.blocked
+    assert get_task(tmp_path, "task-b").status is TaskStatus.blocked
 
 
 def test_max_iterations_stops_dispatching_new_tasks(tmp_path: Path) -> None:
     init_workspace(tmp_path)
-    write_task(tmp_path, make_task("A", offset=0))
-    write_task(tmp_path, make_task("B", offset=1))
+    write_task(tmp_path, make_task("task-a", offset=0))
+    write_task(tmp_path, make_task("task-b", offset=1))
 
     drain_queue(tmp_path, MockAdapter(exit_code=0), max_iterations=1)
 
-    assert get_task(tmp_path, "A").status is TaskStatus.done
-    assert get_task(tmp_path, "B").status is TaskStatus.pending
+    assert get_task(tmp_path, "task-a").status is TaskStatus.done
+    assert get_task(tmp_path, "task-b").status is TaskStatus.pending
     assert latest_run(tmp_path).status == "stopped"
 
 
 def test_max_iterations_exactly_drain_queue_records_completed_run(tmp_path: Path) -> None:
     init_workspace(tmp_path)
-    write_task(tmp_path, make_task("A", offset=0))
-    write_task(tmp_path, make_task("B", offset=1))
+    write_task(tmp_path, make_task("task-a", offset=0))
+    write_task(tmp_path, make_task("task-b", offset=1))
 
     drain_queue(tmp_path, MockAdapter(exit_code=0), max_iterations=2)
 
-    assert get_task(tmp_path, "A").status is TaskStatus.done
-    assert get_task(tmp_path, "B").status is TaskStatus.done
+    assert get_task(tmp_path, "task-a").status is TaskStatus.done
+    assert get_task(tmp_path, "task-b").status is TaskStatus.done
     assert latest_run(tmp_path).status == "completed"
 
 
