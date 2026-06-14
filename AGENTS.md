@@ -26,13 +26,15 @@ All `python`, `pip`, `pytest`, `ruff`, and `praetor` commands must be run with t
 
 ## Source of truth
 
-Before doing anything, read in order:
+In Sid's maintainer checkout, read the local living docs in order before doing project-maintenance work:
 
 1. `Handoff.md` — current state, decisions, next action
 2. `roadmap.md` — design spec, v0 → v3 roadmap
 3. `plan.md` — phased execution plan (P0–P15) with ownership tags
 
 These three files override anything in this AGENTS.md if they conflict — they are living, this is static.
+
+In public clones, these local planning files may be absent or intentionally private. Use `README.md`, `CONTRIBUTING.md`, and `SECURITY.md` as the public source of truth.
 
 ## Planning persistence
 
