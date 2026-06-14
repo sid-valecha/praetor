@@ -95,10 +95,11 @@ def list_worktrees(repo_root: Path) -> list[Worktree]:
             continue
         metadata = json.loads(metadata_path.read_text())
         task_id = _validate_task_id(metadata["task_id"])
-        branch = _validate_worktree_branch_for_task(
+        branch = _validate_recorded_branch_for_worktree(
             metadata["branch"],
             task_id,
             repo_root,
+            path,
         )
         base_branch = _validate_branch_name(
             metadata["base_branch"],
@@ -164,10 +165,11 @@ def branch_for_task(task_id: str, repo_root: Path) -> str:
                 f"Worktree metadata task_id mismatch: expected {task_id}, found {recorded_task_id}"
             )
             raise WorktreeError(msg)
-        return _validate_worktree_branch_for_task(
+        return _validate_recorded_branch_for_worktree(
             metadata["branch"],
             task_id,
             repo_root,
+            worktree_path,
         )
     return _branch_name(task_id, repo_root)
 
@@ -390,6 +392,31 @@ def _validate_worktree_branch_for_task(value: str, task_id: str, repo_root: Path
         msg = f"Worktree branch does not match task id {task_id}: {branch}"
         raise WorktreeError(msg)
     return branch
+
+
+def _validate_recorded_branch_for_worktree(
+    value: str,
+    task_id: str,
+    repo_root: Path,
+    worktree_path: Path,
+) -> str:
+    branch = _validate_worktree_branch_for_task(value, task_id, repo_root)
+    actual_branch = _actual_worktree_branch(worktree_path)
+    if branch != actual_branch:
+        msg = (
+            "Worktree metadata branch does not match actual worktree branch "
+            f"for task id {task_id}: metadata={branch}, actual={actual_branch}"
+        )
+        raise WorktreeError(msg)
+    return branch
+
+
+def _actual_worktree_branch(worktree_path: Path) -> str:
+    return _validate_branch_name(
+        _run_git(["symbolic-ref", "--quiet", "--short", "HEAD"], worktree_path),
+        worktree_path,
+        "actual worktree branch",
+    )
 
 
 def _validate_ref_name(value: str, label: str) -> str:

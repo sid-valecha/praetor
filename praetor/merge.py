@@ -24,7 +24,7 @@ def merge_task(
     repo_root: Path,
     base_branch: str = "main",
 ) -> MergeResult:
-    """Merge praetor/<task_id> into base_branch in the main repo working tree."""
+    """Merge the recorded task branch into base_branch in the main repo working tree."""
 
     repo_root = repo_root.resolve()
     task_branch = branch_for_task(task_id, repo_root)

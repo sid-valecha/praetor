@@ -207,6 +207,20 @@ def test_get_logs_exposes_review_failure_for_review_failed_task(tmp_path: Path) 
     assert result["review_failure"]["summary"] == "Unsafe validation change."
 
 
+def test_get_logs_accepts_legacy_dot_task_id(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+    _write_task(tmp_path, _make_task("legacy.v1", TaskStatus.pending))
+    (tmp_path / ".praetor" / "logs" / "legacy.v1.log").write_text("legacy log\n")
+
+    result = get_logs(str(tmp_path), "legacy.v1")
+
+    assert result == {
+        "task_id": "legacy.v1",
+        "log": "legacy log\n",
+        "review_failure": None,
+    }
+
+
 def test_get_latest_run_returns_none_when_missing(tmp_path: Path) -> None:
     init_workspace(tmp_path)
 

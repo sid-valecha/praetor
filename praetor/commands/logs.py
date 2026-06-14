@@ -16,7 +16,7 @@ def logs_command(task_id: str) -> None:
 
     try:
         safe_task_id = validate_task_id(task_id)
-        task = get_task(repo_root, task_id)
+        task = get_task(repo_root, safe_task_id)
     except (KeyError, ValueError):
         console.print(f"No log found for {task_id}")
         return

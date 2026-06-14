@@ -213,6 +213,17 @@ def test_log_file_written(tmp_path: Path) -> None:
     assert log_path.read_text()
 
 
+def test_run_once_writes_log_for_legacy_dot_task_id(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+    write_task(tmp_path, make_task("legacy.v1"))
+
+    run_once(tmp_path, MockAdapter(exit_code=0, stdout="task output\n"))
+
+    log_path = tmp_path / ".praetor" / "logs" / "legacy.v1.log"
+    assert log_path.is_file()
+    assert "task output" in log_path.read_text()
+
+
 def test_resume_skips_done_tasks(tmp_path: Path) -> None:
     init_workspace(tmp_path)
     write_task(tmp_path, make_task("task-a", status=TaskStatus.done))

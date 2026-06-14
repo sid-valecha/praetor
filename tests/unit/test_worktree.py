@@ -240,6 +240,27 @@ def test_path_sensitive_worktree_operations_accept_legacy_uppercase_id(
     assert worktree.branch == "praetor/LegacyA"
 
 
+def test_create_worktree_accepts_legacy_dot_task_id(scratch_repo: Path) -> None:
+    worktree = create_worktree("legacy.v1", scratch_repo)
+
+    assert worktree.task_id == "legacy.v1"
+    assert worktree.branch == "praetor/legacy.v1"
+
+
+def test_branch_for_task_rejects_metadata_alternate_branch_for_same_task(
+    scratch_repo: Path,
+) -> None:
+    worktree = create_worktree("task-alt", scratch_repo)
+    _git(scratch_repo, "branch", "praetor-task-alt")
+    metadata_path = worktree.path / ".praetor-meta.json"
+    metadata = json.loads(metadata_path.read_text())
+    metadata["branch"] = "praetor-task-alt"
+    metadata_path.write_text(json.dumps(metadata))
+
+    with pytest.raises(WorktreeError, match="does not match actual worktree branch"):
+        branch_for_task("task-alt", scratch_repo)
+
+
 def _git(cwd: Path, *args: str) -> str:
     completed = subprocess.run(
         ["git", *args],

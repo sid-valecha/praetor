@@ -7,7 +7,7 @@ from typing import Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
 MAX_TASK_ID_LENGTH = 100
-_TASK_ID_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_-]{0,99}$")
+_TASK_ID_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}$")
 _EXISTING_TASK_ID_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}$")
 
 
@@ -27,9 +27,11 @@ def validate_task_id(value: str) -> str:
         or "\\" in value
         or "/" in value
         or ".." in value
+        or value.endswith(".")
+        or value.endswith(".lock")
         or not _TASK_ID_RE.fullmatch(value)
     ):
-        msg = "Invalid task id: use letters, numbers, hyphens, and underscores only"
+        msg = "Invalid task id: use letters, numbers, dots, hyphens, and underscores only"
         raise ValueError(msg)
     return value
 
@@ -50,6 +52,8 @@ def validate_existing_task_id(value: str) -> str:
         or "\\" in value
         or "/" in value
         or ".." in value
+        or value.endswith(".")
+        or value.endswith(".lock")
         or _EXISTING_TASK_ID_RE.fullmatch(value) is None
     ):
         msg = "Invalid task id: use letters, numbers, dots, hyphens, and underscores only"
