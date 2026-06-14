@@ -34,6 +34,10 @@ Before doing anything, read in order:
 
 These three files override anything in this AGENTS.md if they conflict — they are living, this is static.
 
+## Planning persistence
+
+When a conversation produces a new product direction, phase, architectural decision, system behavior, or sequencing change, update the living docs in the same turn unless the user explicitly says not to. Use `roadmap.md` for public product direction, `plan.md` for execution phases, `design-notes.md` for locked decisions/failure modes, and `Handoff.md` for current PM state. Keep updates tight; do not create extra planning files unless the user asks.
+
 ## Conventions
 
 - **State location:** `.praetor/` per-repo, gitignored

@@ -202,6 +202,16 @@ Ship as plain markdown in `skills/`. Claude Code picks them up when the plugin i
 - Strong path: Claude implements and Codex reviews first; accessible path: same-provider executor and reviewer with separate prompts/invocations
 - Preserve maker/checker separation in run history so users can audit which agent wrote and which agent reviewed
 
+**v1.3.x — Maintainer loop MVP**
+- Move Praetor from PM-started drains toward an autonomous maintainer loop for the current repository
+- Add `praetor maintain --once` to scan open issues, open PRs, CI, and local queue state, then classify work as autonomous, needs owner, or defer
+- Add an autonomous mode that converts safe work into Praetor tasks and drains them through executor -> verify -> reviewer -> bounded retry
+- Ingest PR review comments and failed CI checks as repair inputs, so actionable feedback becomes new Praetor repair tasks instead of manual follow-up
+- Generate human-readable run reports from `.praetor/runs/*.json` so users can see what happened, why retries happened, what changed, what proof passed, and what still needs a decision
+- Keep durable learning local: `.praetor/runs/*.json` is structured truth, `.praetor/reports/*.md` is readable evidence, and future `.praetor/learnings.md` stores conservative lessons from real failures
+- Add `praetor maintain --watch --interval 300` only after `--once` is reliable; use a lock/heartbeat so only one maintainer loop owns a repo at a time
+- Merge policy stays explicit: manual decision, auto-open/update PR, or auto-merge only after verify, reviewer, CI, and configured external review gates pass
+
 **v1.4 — Memory compounding**
 - Add `.praetor/learnings.md`
 - Summarize completed, failed, and rejected runs into human-readable lessons
@@ -226,7 +236,7 @@ Ship as plain markdown in `skills/`. Claude Code picks them up when the plugin i
 
 **v2 — Planner mode + maintainer intake**
 - `praetor plan "goal"` short-lived planning session writes plan.md + drafts tasks
-- GitHub Issues / PR comment intake
+- Broader GitHub Issues / PR comment intake across external queues, building on the current-repo maintainer loop
 - Linear and Slack intake once the task-source abstraction is clear
 - Patrol loops for background maintenance: failing CI, stale blocked tasks, new issues, aging review failures
 
