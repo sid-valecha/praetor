@@ -14,7 +14,14 @@ from praetor.config import resolve_max_review_retries
 from praetor.dag import compute_ready_set, propagate_blocked
 from praetor.events import EventCallback, EventType, RunnerEvent
 from praetor.merge_queue import merge_one_task
-from praetor.models import AgentAdapter, ReviewResult, Task, TaskResult, TaskStatus
+from praetor.models import (
+    AgentAdapter,
+    ReviewResult,
+    Task,
+    TaskResult,
+    TaskStatus,
+    validate_task_id,
+)
 from praetor.pool import WorkerPool
 from praetor.recovery import format_review_failure_for_prompt, latest_review_failure
 from praetor.review import format_review_for_log, run_task_review
@@ -129,7 +136,7 @@ def run_once(
         _emit(on_event, "task_failed", task_id=task.id, detail="adapter exception")
         raise
 
-    log_path = repo_root / ".praetor" / "logs" / f"{task.id}.log"
+    log_path = _task_log_path(repo_root, task.id)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.write_text(f"{result.stdout}{result.stderr}")
 
@@ -595,16 +602,25 @@ def _raise_on_stale_running(tasks: list[Task]) -> None:
 
 
 def _write_task_log(repo_root: Path, task_id: str, content: str) -> None:
-    log_path = repo_root / ".praetor" / "logs" / f"{task_id}.log"
+    log_path = _task_log_path(repo_root, task_id)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.write_text(content)
 
 
 def _append_task_log(repo_root: Path, task_id: str, content: str) -> None:
-    log_path = repo_root / ".praetor" / "logs" / f"{task_id}.log"
+    log_path = _task_log_path(repo_root, task_id)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a") as log_file:
         log_file.write(content)
+
+
+def _task_log_path(repo_root: Path, task_id: str) -> Path:
+    logs_dir = (repo_root / ".praetor" / "logs").resolve()
+    log_path = (logs_dir / f"{validate_task_id(task_id)}.log").resolve()
+    if log_path.parent != logs_dir:
+        msg = f"Invalid task log path for {task_id}"
+        raise ValueError(msg)
+    return log_path
 
 
 def _commit_worktree_changes(repo_root: Path, task_id: str, worktree_path: Path) -> bool:

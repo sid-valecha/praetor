@@ -407,22 +407,22 @@ def test_parallel_ok_false_runs_alone(scratch_repo: Path) -> None:
 
 
 def test_worktree_collision_recovery(scratch_repo: Path) -> None:
-    create_worktree("task-X", scratch_repo)
-    _write_task(scratch_repo, _make_task("task-X", offset=0))
-    _write_task(scratch_repo, _make_task("task-Y", offset=1))
+    create_worktree("task-x", scratch_repo)
+    _write_task(scratch_repo, _make_task("task-x", offset=0))
+    _write_task(scratch_repo, _make_task("task-y", offset=1))
 
     drain_queue(scratch_repo, SleepRecordingAdapter(), max_parallel=2)
 
-    assert get_task(scratch_repo, "task-X").status is TaskStatus.failed
-    assert get_task(scratch_repo, "task-Y").status is TaskStatus.pending_merge
-    log_text = (scratch_repo / ".praetor" / "logs" / "task-X.log").read_text()
-    assert "Worktree collision for task-X" in log_text
+    assert get_task(scratch_repo, "task-x").status is TaskStatus.failed
+    assert get_task(scratch_repo, "task-y").status is TaskStatus.pending_merge
+    log_text = (scratch_repo / ".praetor" / "logs" / "task-x.log").read_text()
+    assert "Worktree collision for task-x" in log_text
 
 
 def test_worktree_collision_does_not_consume_iteration_budget(scratch_repo: Path) -> None:
-    create_worktree("task-X", scratch_repo)
-    _write_task(scratch_repo, _make_task("task-X", offset=0))
-    _write_task(scratch_repo, _make_task("task-Y", offset=1))
+    create_worktree("task-x", scratch_repo)
+    _write_task(scratch_repo, _make_task("task-x", offset=0))
+    _write_task(scratch_repo, _make_task("task-y", offset=1))
 
     drain_queue(
         scratch_repo,
@@ -431,8 +431,8 @@ def test_worktree_collision_does_not_consume_iteration_budget(scratch_repo: Path
         max_iterations=1,
     )
 
-    assert get_task(scratch_repo, "task-X").status is TaskStatus.failed
-    assert get_task(scratch_repo, "task-Y").status is TaskStatus.pending_merge
+    assert get_task(scratch_repo, "task-x").status is TaskStatus.failed
+    assert get_task(scratch_repo, "task-y").status is TaskStatus.pending_merge
 
 
 def test_merge_failed_does_not_block_independent_siblings(scratch_repo: Path) -> None:

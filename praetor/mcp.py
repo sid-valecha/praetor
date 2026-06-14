@@ -6,6 +6,7 @@ from praetor.adapters import get_adapter, resolve_reviewer_adapter
 from praetor.dag import compute_ready_set
 from praetor.merge_queue import merge_all_pending as merge_all_pending_core
 from praetor.merge_queue import merge_one_task
+from praetor.models import validate_task_id
 from praetor.recovery import review_failure_for_task
 from praetor.runner import drain_queue
 from praetor.run_history import latest_run
@@ -140,14 +141,12 @@ def merge_all_pending(
 def get_logs(repo_root: str, task_id: str) -> dict[str, Any]:
     """Read a Praetor task log."""
     root = Path(repo_root)
-    log_path = root / ".praetor" / "logs" / f"{task_id}.log"
-    review_failure = None
-    try:
-        review_failure = review_failure_for_task(root, state_get_task(root, task_id))
-    except KeyError:
-        pass
+    safe_task_id = validate_task_id(task_id)
+    task = state_get_task(root, safe_task_id)
+    log_path = _task_log_path(root, safe_task_id)
+    review_failure = review_failure_for_task(root, task)
     return {
-        "task_id": task_id,
+        "task_id": safe_task_id,
         "log": log_path.read_text() if log_path.exists() else "",
         "review_failure": review_failure,
     }
@@ -162,3 +161,12 @@ def get_latest_run(repo_root: str) -> dict[str, Any] | None:
 
 def run_stdio() -> None:
     server.run(transport="stdio")
+
+
+def _task_log_path(repo_root: Path, task_id: str) -> Path:
+    logs_dir = (repo_root / ".praetor" / "logs").resolve()
+    log_path = (logs_dir / f"{validate_task_id(task_id)}.log").resolve()
+    if log_path.parent != logs_dir:
+        msg = f"Invalid task log path for {task_id}"
+        raise ValueError(msg)
+    return log_path

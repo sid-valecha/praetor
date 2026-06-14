@@ -1,8 +1,15 @@
 import json
 from pathlib import Path
+import re
 import subprocess
 
 from pydantic import BaseModel
+
+from praetor.models import validate_task_id
+
+
+_BRANCH_PREFIX = "praetor"
+_FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
 class WorktreeError(RuntimeError):
@@ -24,10 +31,13 @@ def create_worktree(
     base_branch: str = "main",
     base_ref: str = "HEAD",
 ) -> Worktree:
+    task_id = _validate_task_id(task_id)
     repo_root = repo_root.resolve()
-    worktrees_dir = _worktrees_dir(repo_root)
-    worktree_path = worktrees_dir / task_id
-    branch = _branch_name(task_id)
+    base_branch = _validate_branch_name(base_branch, repo_root, "base branch")
+    base_ref = _validate_ref_name(base_ref, "base ref")
+    worktree_path = _task_worktree_path(repo_root, task_id)
+    worktrees_dir = worktree_path.parent
+    branch = _branch_name(task_id, repo_root)
 
     if worktree_path.exists():
         msg = f"Worktree path already exists: {worktree_path}"
@@ -36,7 +46,10 @@ def create_worktree(
         msg = f"Worktree branch already exists: {branch}"
         raise WorktreeError(msg)
 
-    full_sha = _run_git(["rev-parse", "--verify", base_ref], repo_root).splitlines()[0]
+    full_sha = _run_git(
+        ["rev-parse", "--verify", "--end-of-options", base_ref],
+        repo_root,
+    ).splitlines()[0]
 
     worktrees_dir.mkdir(parents=True, exist_ok=True)
     _run_git(["worktree", "add", "-b", branch, str(worktree_path), full_sha], repo_root)
@@ -64,7 +77,7 @@ def create_worktree(
 
 def list_worktrees(repo_root: Path) -> list[Worktree]:
     repo_root = repo_root.resolve()
-    worktrees_dir = _worktrees_dir(repo_root)
+    worktrees_dir = _worktrees_dir(repo_root).resolve()
     output = _run_git(["worktree", "list", "--porcelain"], repo_root)
     worktrees = []
 
@@ -81,14 +94,27 @@ def list_worktrees(repo_root: Path) -> list[Worktree]:
         if not metadata_path.exists():
             continue
         metadata = json.loads(metadata_path.read_text())
+        task_id = _validate_task_id(metadata["task_id"])
+        branch = _validate_recorded_branch_for_worktree(
+            metadata["branch"],
+            task_id,
+            repo_root,
+            path,
+        )
+        base_branch = _validate_branch_name(
+            metadata["base_branch"],
+            repo_root,
+            "base branch",
+        )
+        base_sha = _validate_full_sha(metadata["base_sha"])
 
         worktrees.append(
             Worktree(
-                task_id=metadata["task_id"],
+                task_id=task_id,
                 path=path,
-                branch=metadata["branch"],
-                base_branch=metadata["base_branch"],
-                base_sha=metadata["base_sha"],
+                branch=branch,
+                base_branch=base_branch,
+                base_sha=base_sha,
             )
         )
 
@@ -96,6 +122,7 @@ def list_worktrees(repo_root: Path) -> list[Worktree]:
 
 
 def get_worktree(task_id: str, repo_root: Path) -> Worktree | None:
+    task_id = _validate_task_id(task_id)
     for worktree in list_worktrees(repo_root):
         if worktree.task_id == task_id:
             return worktree
@@ -103,9 +130,9 @@ def get_worktree(task_id: str, repo_root: Path) -> Worktree | None:
 
 
 def remove_worktree(task_id: str, repo_root: Path, force: bool = False) -> None:
+    task_id = _validate_task_id(task_id)
     repo_root = repo_root.resolve()
-    worktree_path = _worktrees_dir(repo_root) / task_id
-    branch = _branch_name(task_id)
+    worktree_path = _task_worktree_path(repo_root, task_id)
 
     if not worktree_path.exists():
         if force:
@@ -113,12 +140,38 @@ def remove_worktree(task_id: str, repo_root: Path, force: bool = False) -> None:
         msg = f"Worktree path does not exist: {worktree_path}"
         raise WorktreeError(msg)
 
+    branch = branch_for_task(task_id, repo_root)
+
     args = ["worktree", "remove"]
     if force:
         args.append("--force")
     args.append(str(worktree_path))
     _run_git(args, repo_root)
     _delete_branch(branch, repo_root)
+
+
+def branch_for_task(task_id: str, repo_root: Path) -> str:
+    """Return the recorded branch for an existing worktree, or the deterministic
+    branch name we would use to create one if no sidecar exists yet."""
+    task_id = _validate_task_id(task_id)
+    repo_root = repo_root.resolve()
+    worktree_path = _task_worktree_path(repo_root, task_id)
+    metadata_path = _metadata_path(worktree_path)
+    if metadata_path.exists():
+        metadata = json.loads(metadata_path.read_text())
+        recorded_task_id = _validate_task_id(metadata["task_id"])
+        if recorded_task_id != task_id:
+            msg = (
+                f"Worktree metadata task_id mismatch: expected {task_id}, found {recorded_task_id}"
+            )
+            raise WorktreeError(msg)
+        return _validate_recorded_branch_for_worktree(
+            metadata["branch"],
+            task_id,
+            repo_root,
+            worktree_path,
+        )
+    return _branch_name(task_id, repo_root)
 
 
 def _run_git(args: list[str], cwd: Path) -> str:
@@ -149,6 +202,15 @@ def _worktrees_dir(repo_root: Path) -> Path:
     return repo_root / ".praetor" / "worktrees"
 
 
+def _task_worktree_path(repo_root: Path, task_id: str) -> Path:
+    worktrees_dir = _worktrees_dir(repo_root).resolve()
+    worktree_path = (worktrees_dir / _validate_task_id(task_id)).resolve()
+    if worktree_path.parent != worktrees_dir:
+        msg = f"Invalid worktree path for task id: {task_id}"
+        raise WorktreeError(msg)
+    return worktree_path
+
+
 def _metadata_path(worktree_path: Path) -> Path:
     return worktree_path / ".praetor-meta.json"
 
@@ -169,11 +231,51 @@ def _ignore_metadata_sidecar(worktree_path: Path) -> None:
         exclude_file.write(".praetor-meta.json\n")
 
 
-def _branch_name(task_id: str) -> str:
-    return f"praetor/{task_id}"
+def _branch_name(task_id: str, repo_root: Path) -> str:
+    task_id = _validate_task_id(task_id)
+    if _ref_exists(f"refs/heads/{_BRANCH_PREFIX}", repo_root):
+        return _validate_branch_name(
+            f"{_BRANCH_PREFIX}-{task_id}",
+            repo_root,
+            "worktree branch",
+        )
+    return _validate_branch_name(
+        f"{_BRANCH_PREFIX}/{task_id}",
+        repo_root,
+        "worktree branch",
+    )
+
+
+def _allowed_branch_names(task_id: str, repo_root: Path) -> set[str]:
+    task_id = _validate_task_id(task_id)
+    return {
+        _validate_branch_name(f"{_BRANCH_PREFIX}/{task_id}", repo_root, "worktree branch"),
+        _validate_branch_name(f"{_BRANCH_PREFIX}-{task_id}", repo_root, "worktree branch"),
+    }
+
+
+def _ref_exists(ref: str, repo_root: Path) -> bool:
+    completed = subprocess.run(
+        ["git", "show-ref", "--verify", "--quiet", ref],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode == 0:
+        return True
+    if completed.returncode == 1:
+        return False
+
+    msg = (
+        f"Git command failed: git show-ref --verify --quiet {ref} "
+        f"(exit {completed.returncode}): {completed.stderr.strip()}"
+    )
+    raise WorktreeError(msg)
 
 
 def _branch_exists(branch: str, repo_root: Path) -> bool:
+    branch = _validate_branch_name(branch, repo_root, "worktree branch")
     completed = subprocess.run(
         ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
         cwd=repo_root,
@@ -195,8 +297,9 @@ def _branch_exists(branch: str, repo_root: Path) -> bool:
 
 
 def _delete_branch(branch: str, repo_root: Path) -> None:
+    branch = _validate_branch_name(branch, repo_root, "worktree branch")
     completed = subprocess.run(
-        ["git", "branch", "-D", branch],
+        ["git", "branch", "-D", "--", branch],
         cwd=repo_root,
         capture_output=True,
         text=True,
@@ -239,3 +342,100 @@ def _is_under(path: Path, parent: Path) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _validate_task_id(task_id: str) -> str:
+    try:
+        return validate_task_id(task_id)
+    except ValueError as exc:
+        msg = str(exc)
+        raise WorktreeError(msg) from exc
+
+
+def _validate_branch_name(value: str, repo_root: Path, label: str) -> str:
+    if (
+        not isinstance(value, str)
+        or not value
+        or value.startswith("-")
+        or value.startswith("/")
+        or value.endswith("/")
+        or "\\" in value
+        or ".." in value
+        or "@{" in value
+        or value.endswith(".")
+        or value.endswith(".lock")
+        or any(ord(char) < 32 or char.isspace() for char in value)
+        or any(
+            part in {"", ".", ".."} or part.startswith(".") or part.startswith("-")
+            for part in value.split("/")
+        )
+    ):
+        msg = f"Invalid {label}: {value}"
+        raise WorktreeError(msg)
+
+    completed = subprocess.run(
+        ["git", "check-ref-format", "--branch", value],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        msg = f"Invalid {label}: {value}"
+        raise WorktreeError(msg)
+    return value
+
+
+def _validate_worktree_branch_for_task(value: str, task_id: str, repo_root: Path) -> str:
+    branch = _validate_branch_name(value, repo_root, "worktree branch")
+    if branch not in _allowed_branch_names(task_id, repo_root):
+        msg = f"Worktree branch does not match task id {task_id}: {branch}"
+        raise WorktreeError(msg)
+    return branch
+
+
+def _validate_recorded_branch_for_worktree(
+    value: str,
+    task_id: str,
+    repo_root: Path,
+    worktree_path: Path,
+) -> str:
+    branch = _validate_worktree_branch_for_task(value, task_id, repo_root)
+    actual_branch = _actual_worktree_branch(worktree_path)
+    if branch != actual_branch:
+        msg = (
+            "Worktree metadata branch does not match actual worktree branch "
+            f"for task id {task_id}: metadata={branch}, actual={actual_branch}"
+        )
+        raise WorktreeError(msg)
+    return branch
+
+
+def _actual_worktree_branch(worktree_path: Path) -> str:
+    return _validate_branch_name(
+        _run_git(["symbolic-ref", "--quiet", "--short", "HEAD"], worktree_path),
+        worktree_path,
+        "actual worktree branch",
+    )
+
+
+def _validate_ref_name(value: str, label: str) -> str:
+    if (
+        not isinstance(value, str)
+        or not value
+        or value.startswith("-")
+        or value.startswith("/")
+        or "\\" in value
+        or ".." in value
+        or any(ord(char) < 32 or char.isspace() for char in value)
+    ):
+        msg = f"Invalid {label}: {value}"
+        raise WorktreeError(msg)
+    return value
+
+
+def _validate_full_sha(value: str) -> str:
+    if not isinstance(value, str) or _FULL_SHA_RE.fullmatch(value) is None:
+        msg = f"Invalid base sha: {value}"
+        raise WorktreeError(msg)
+    return value

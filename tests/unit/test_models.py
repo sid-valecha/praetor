@@ -87,6 +87,29 @@ def test_task_rejects_invalid_priority() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "task_id",
+    [
+        "task/a",
+        "task\\a",
+        "../task-a",
+        "/task-a",
+        "-task-a",
+        "task..a",
+        "a" * 101,
+    ],
+)
+def test_task_rejects_unsafe_ids(task_id: str) -> None:
+    with pytest.raises(ValidationError):
+        Task(id=task_id, created=datetime(2026, 5, 23, 14, 22, tzinfo=UTC))
+
+
+def test_task_accepts_legacy_uppercase_ids() -> None:
+    task = Task(id="Task-A", created=datetime(2026, 5, 23, 14, 22, tzinfo=UTC))
+
+    assert task.id == "Task-A"
+
+
 def test_task_mutable_defaults_are_not_shared() -> None:
     created = datetime(2026, 5, 23, 14, 22, tzinfo=UTC)
     first = Task(id="first", created=created)

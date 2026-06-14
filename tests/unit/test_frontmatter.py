@@ -253,3 +253,19 @@ Body
 
     with pytest.raises(ValidationError):
         parse_task(path)
+
+
+def test_unsafe_frontmatter_id_raises_validation_error(tmp_path: Path) -> None:
+    path = tmp_path / "unsafe-id.md"
+    path.write_text(
+        """---
+id: ../escape
+created: 2026-05-23T14:22:00Z
+---
+
+Body
+"""
+    )
+
+    with pytest.raises(ValidationError):
+        parse_task(path)

@@ -48,6 +48,44 @@ def test_logs_do_not_show_stale_review_failure_after_task_done(
     assert result.output == "raw executor log\n"
 
 
+def test_logs_reject_unknown_task_even_if_orphan_log_exists(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    (tmp_path / ".praetor" / "logs" / "missing.log").write_text("orphan log\n")
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["logs", "missing"])
+
+    assert result.exit_code == 0
+    assert "orphan log" not in result.output
+    assert "No log found for missing" in result.output
+
+
+def test_logs_reject_path_escape_task_id(tmp_path: Path, monkeypatch) -> None:
+    init_workspace(tmp_path)
+    (tmp_path / ".praetor" / "evil.log").write_text("secret\n")
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["logs", "../evil"])
+
+    assert "secret" not in result.output
+    assert "No log found for ../evil" in result.output
+
+
+def test_logs_accept_legacy_dot_task_id(tmp_path: Path, monkeypatch) -> None:
+    init_workspace(tmp_path)
+    _write_task(tmp_path, _make_task("legacy.v1", TaskStatus.done))
+    (tmp_path / ".praetor" / "logs" / "legacy.v1.log").write_text("legacy log\n")
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["logs", "legacy.v1"])
+
+    assert result.exit_code == 0
+    assert result.output == "legacy log\n"
+
+
 def _make_task(task_id: str, status: TaskStatus) -> Task:
     return Task(
         id=task_id,

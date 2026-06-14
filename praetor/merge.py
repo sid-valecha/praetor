@@ -4,6 +4,8 @@ import subprocess
 
 from pydantic import BaseModel
 
+from praetor.worktree import branch_for_task
+
 
 class MergeError(RuntimeError):
     """Raised on git operations that leave the base repo needing human recovery."""
@@ -22,10 +24,10 @@ def merge_task(
     repo_root: Path,
     base_branch: str = "main",
 ) -> MergeResult:
-    """Merge praetor/<task_id> into base_branch in the main repo working tree."""
+    """Merge the recorded task branch into base_branch in the main repo working tree."""
 
     repo_root = repo_root.resolve()
-    task_branch = f"praetor/{task_id}"
+    task_branch = branch_for_task(task_id, repo_root)
     previous_ref = _current_ref(repo_root)
 
     if _git_status_porcelain(repo_root):

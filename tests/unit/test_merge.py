@@ -4,6 +4,7 @@ import subprocess
 import pytest
 
 from praetor.merge import merge_task
+from praetor.worktree import create_worktree
 
 
 @pytest.fixture
@@ -93,6 +94,24 @@ def test_merge_uses_no_ff(scratch_repo: Path) -> None:
         result.merge_commit_sha,
     ).split()
     assert len(parents) == 3
+
+
+def test_merge_uses_branch_recorded_by_worktree_metadata(scratch_repo: Path) -> None:
+    (scratch_repo / ".gitignore").write_text(".praetor/\n")
+    _git(scratch_repo, "add", ".gitignore")
+    _git(scratch_repo, "commit", "-m", "ignore praetor")
+    _git(scratch_repo, "branch", "praetor")
+    worktree = create_worktree("task-a", scratch_repo)
+    (worktree.path / "task-a.txt").write_text("task a\n")
+    _git(worktree.path, "add", "task-a.txt")
+    _git(worktree.path, "commit", "-m", "task a")
+
+    result = merge_task("task-a", scratch_repo)
+
+    assert result.success is True
+    assert result.message == "merged"
+    assert worktree.branch != "praetor/task-a"
+    assert _git(scratch_repo, "branch", "--contains", worktree.branch).strip() != ""
 
 
 def _create_task_branch(

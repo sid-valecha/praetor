@@ -6,7 +6,13 @@ import subprocess
 import pytest
 
 from praetor import worktree as worktree_module
-from praetor.worktree import WorktreeError, create_worktree, list_worktrees, remove_worktree
+from praetor.worktree import (
+    WorktreeError,
+    branch_for_task,
+    create_worktree,
+    list_worktrees,
+    remove_worktree,
+)
 
 
 @pytest.fixture
@@ -60,6 +66,13 @@ def test_create_worktree_duplicate_branch(scratch_repo: Path) -> None:
 
     with pytest.raises(WorktreeError, match="Worktree branch already exists"):
         create_worktree("task-002", scratch_repo)
+
+
+def test_create_worktree_rejects_path_escape_task_id(scratch_repo: Path) -> None:
+    with pytest.raises(WorktreeError, match="Invalid task id"):
+        create_worktree("../escape", scratch_repo)
+
+    assert not (scratch_repo / ".praetor" / "escape").exists()
 
 
 def test_list_worktrees_empty(scratch_repo: Path) -> None:
@@ -143,6 +156,33 @@ def test_worktree_isolation(scratch_repo: Path) -> None:
     assert _git(scratch_repo, "status", "--porcelain") == ""
 
 
+def test_create_worktree_when_praetor_branch_blocks_namespace(scratch_repo: Path) -> None:
+    _git(scratch_repo, "branch", "praetor")
+
+    worktree = create_worktree("task-x", scratch_repo)
+
+    assert worktree.path.is_dir()
+    assert worktree.branch != "praetor/task-x"
+    assert _git(scratch_repo, "branch", "--list", worktree.branch).strip() != ""
+    metadata = json.loads((worktree.path / ".praetor-meta.json").read_text())
+    assert metadata["branch"] == worktree.branch
+    assert _git(scratch_repo, "branch", "--list", "praetor").strip() != ""
+
+
+def test_remove_worktree_cleans_branch_under_namespace_collision(
+    scratch_repo: Path,
+) -> None:
+    _git(scratch_repo, "branch", "praetor")
+    worktree = create_worktree("task-x", scratch_repo)
+    branch = worktree.branch
+
+    remove_worktree("task-x", scratch_repo)
+
+    assert not worktree.path.exists()
+    assert _git(scratch_repo, "branch", "--list", branch).strip() == ""
+    assert _git(scratch_repo, "branch", "--list", "praetor").strip() != ""
+
+
 def test_create_worktree_explicit_sha(scratch_repo: Path) -> None:
     first_sha = _git(scratch_repo, "rev-parse", "HEAD")
     (scratch_repo / "second.txt").write_text("second\n")
@@ -154,6 +194,71 @@ def test_create_worktree_explicit_sha(scratch_repo: Path) -> None:
 
     assert worktree.base_sha == first_sha
     assert _git(worktree.path, "rev-parse", "HEAD") == first_sha
+
+
+def test_branch_for_task_rejects_invalid_metadata_branch(scratch_repo: Path) -> None:
+    worktree = create_worktree("task-meta-branch", scratch_repo)
+    metadata_path = worktree.path / ".praetor-meta.json"
+    metadata = json.loads(metadata_path.read_text())
+    metadata["branch"] = "-danger"
+    metadata_path.write_text(json.dumps(metadata))
+
+    with pytest.raises(WorktreeError, match="Invalid worktree branch"):
+        branch_for_task("task-meta-branch", scratch_repo)
+
+
+def test_branch_for_task_rejects_metadata_branch_for_wrong_task(
+    scratch_repo: Path,
+) -> None:
+    worktree = create_worktree("task-meta-branch", scratch_repo)
+    metadata_path = worktree.path / ".praetor-meta.json"
+    metadata = json.loads(metadata_path.read_text())
+    metadata["branch"] = "main"
+    metadata_path.write_text(json.dumps(metadata))
+
+    with pytest.raises(WorktreeError, match="does not match task id"):
+        branch_for_task("task-meta-branch", scratch_repo)
+
+
+def test_branch_for_task_rejects_metadata_task_id_mismatch(scratch_repo: Path) -> None:
+    worktree = create_worktree("task-meta-branch", scratch_repo)
+    metadata_path = worktree.path / ".praetor-meta.json"
+    metadata = json.loads(metadata_path.read_text())
+    metadata["task_id"] = "other-task"
+    metadata_path.write_text(json.dumps(metadata))
+
+    with pytest.raises(WorktreeError, match="task_id mismatch"):
+        branch_for_task("task-meta-branch", scratch_repo)
+
+
+def test_path_sensitive_worktree_operations_accept_legacy_uppercase_id(
+    scratch_repo: Path,
+) -> None:
+    worktree = create_worktree("LegacyA", scratch_repo)
+
+    assert worktree.task_id == "LegacyA"
+    assert worktree.branch == "praetor/LegacyA"
+
+
+def test_create_worktree_accepts_legacy_dot_task_id(scratch_repo: Path) -> None:
+    worktree = create_worktree("legacy.v1", scratch_repo)
+
+    assert worktree.task_id == "legacy.v1"
+    assert worktree.branch == "praetor/legacy.v1"
+
+
+def test_branch_for_task_rejects_metadata_alternate_branch_for_same_task(
+    scratch_repo: Path,
+) -> None:
+    worktree = create_worktree("task-alt", scratch_repo)
+    _git(scratch_repo, "branch", "praetor-task-alt")
+    metadata_path = worktree.path / ".praetor-meta.json"
+    metadata = json.loads(metadata_path.read_text())
+    metadata["branch"] = "praetor-task-alt"
+    metadata_path.write_text(json.dumps(metadata))
+
+    with pytest.raises(WorktreeError, match="does not match actual worktree branch"):
+        branch_for_task("task-alt", scratch_repo)
 
 
 def _git(cwd: Path, *args: str) -> str:

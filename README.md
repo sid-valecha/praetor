@@ -7,6 +7,8 @@
 
 Praetor is a local-first closed-loop harness for coding agents; it is not another coding agent. It queues scoped work, runs agents in bounded loops, verifies results, records durable run evidence, and can require an independent reviewer before work is merged.
 
+The package manager install paths (`pipx install praetor-cli`, Homebrew, `pip install praetor-cli`) track released versions from package distribution; `main` contains current development and can include unreleased behavior.
+
 ![Praetor parallel mode demo](docs/demo.gif)
 
 ## Install
@@ -34,6 +36,14 @@ pip install praetor-cli
 
 The PyPI package is `praetor-cli`; the Homebrew formula is `sid-valecha/praetor/praetor`; the installed binary is `praetor`.
 
+## Release and branch status
+
+Praetor is local-first, but the release line is still separate from repository development:
+
+- Installed binaries come from released versions on package hosts.
+- The `main` branch may include unreleased work and documentation ahead of the latest published tag.
+- Prefer released versions for automation and new projects; prefer `main` only when testing unreleased features intentionally.
+
 ## Quickstart
 
 Sequential mode is the default. It runs one ready task at a time in your current checkout.
@@ -45,6 +55,42 @@ praetor add --title 'Implement auth module' --verify 'pytest tests/test_auth.py'
 praetor status
 praetor run
 ```
+
+### Safe first run
+
+The demo flow is intended to be safe, deterministic, and easy to recover from:
+
+1. Start in a disposable or sample repository first.
+2. Start with `--max-parallel 1` to keep all work in the current checkout.
+3. Use verifications that you can rerun locally (for example unit tests or lint), and make sure they are safe to execute.
+
+```bash
+cd your-project
+praetor init
+praetor add --title "Docs-only change smoke test" --verify "python -m compileall ."
+praetor run --max-parallel 1
+```
+
+## Adapter prerequisites
+
+Praetor delegates execution to adapters, and each adapter must be present and configured in your environment.
+
+- Claude flow: install and authenticate the `claude` CLI, then run with `--adapter claude`.
+- Codex flow: install and configure the `codex` CLI, then run with `--adapter codex`.
+
+Run one-time adapter checks before broad adoption:
+
+- Verify credentials and baseline command execution outside of valuable repositories first.
+- Keep review mode enabled for risky work: `--reviewer-adapter` can be the same as or different from `--adapter`.
+- Treat networked model calls as a trust boundary; keep logs and prompts in `.praetor` local and scoped.
+
+## Experiment: `praetor maintain --once`
+
+`praetor maintain --once` is experimental and local-oriented. It performs a single maintainer pass that is intended to stay readable and recoverable before introducing mutation. Use it on non-critical work first.
+
+- Local, read-only pass intent in this slice.
+- Intended default behavior is `report-only`: classification and evidence collection.
+- Avoid passing auto-commit or auto-merge actions until this section is explicitly documented as stable in release notes.
 
 ## Quickstart: Parallel Mode
 
@@ -106,6 +152,7 @@ Pass `--once` to get the same single-pass behavior while exercising the loop com
 | `praetor status` | `--json` | Print task status. With `--json`, emit a JSON array (one object per task with all schema fields plus a derived `ready` bool) instead of the Rich table — for scripts, CI pipelines, and non-MCP agent callers. |
 | `praetor run` | `--adapter`, `--model`, `--effort`, `--reviewer-adapter`, `--reviewer-model`, `--reviewer-effort`, `--max-parallel`, `--base-branch`, `--merge-strategy`, `--max-iterations`, `--max-runtime` | Drain ready tasks with the selected agent adapter. `--max-parallel 1` runs sequentially; values greater than 1 use worktrees. `--model` and `--effort` are Claude/Codex executor options; reviewer options override the review route for that run. |
 | `praetor loop` | `--adapter`, `--model`, `--effort`, `--reviewer-adapter`, `--reviewer-model`, `--reviewer-effort`, `--max-parallel`, `--base-branch`, `--merge-strategy`, `--once`, `--poll-interval`, `--max-iterations`, `--max-runtime` | Drain once, then keep watching `.praetor/tasks/` and drain again when new work appears. Executor and reviewer model/effort flags follow the same semantics as `praetor run`. |
+| `praetor maintain` | `--once` | Experimental local maintainer pass for Praetor task/run-state triage and reporting. `--once` keeps it to a single read-only pass. |
 | `praetor merge` | `TASK_ID...`, `--all`, `--retry`, `--base-branch` | Merge `pending_merge` tasks back to the base branch. With `--retry`, also retry `merge_failed` tasks. |
 | `praetor reset` | `TASK_ID...`, `--clean-worktree`, `--all-stale` | Reset failed, blocked, merge-failed, or stale-running tasks back to `pending`. |
 | `praetor logs <task-id>` | `<task-id>` | Print the saved log for one task. |
@@ -147,6 +194,15 @@ Praetor does not require bridge plugins for native review. If you are working di
 Those plugins are host-workflow helpers. Praetor core uses native adapters and records executor/reviewer evidence in `.praetor/runs/*.json`.
 
 ## Run History
+
+`.praetor` is local state storage and is not intended as a public artifact:
+
+- `.praetor/tasks/` stores task payloads with prompts and checks.
+- `.praetor/runs/` stores verifier/reviewer evidence and timing traces.
+- `.praetor/logs/` stores terminal logs.
+- `.praetor/worktrees/` stores per-task git worktrees used during parallel execution.
+
+Do not publish `.praetor` by default. Keep it in local-only directories and out of file shares where project-restricted evidence, secrets, or token-bearing outputs could leak.
 
 Every `praetor run` and drain pass writes durable evidence to:
 
