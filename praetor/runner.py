@@ -297,10 +297,14 @@ def drain_queue(
         run_status = "failed"
         raise
     finally:
-        if run_status == "completed" and guardrails.reached_limit():
+        if run_status == "completed" and _guardrail_stopped_ready_work(repo_root, guardrails):
             run_status = "stopped"
         recorder.finish_run(run_status)
         _emit(on_event, "drain_finished")
+
+
+def _guardrail_stopped_ready_work(repo_root: Path, guardrails: DrainGuardrails) -> bool:
+    return guardrails.reached_limit() and bool(compute_ready_set(list_tasks(repo_root)))
 
 
 def _drain_parallel(

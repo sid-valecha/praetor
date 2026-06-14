@@ -122,7 +122,7 @@ class AgentAdapter(Protocol):
     def exec(self, prompt: str, cwd: Path, timeout_s: float | None = None) -> TaskResult: ...
 ```
 
-Rich enough for the v1.2 reviewer (needs diff + stdout) without future changes. `ClaudeCodeAdapter` shells to `claude -p`. `CodexAdapter` is a stub raising `NotImplementedError`.
+Rich enough for the v1.2 reviewer (needs diff + stdout) without future changes. `ClaudeCodeAdapter` shells to `claude -p`, while `CodexAdapter` uses local `codex exec` for execution and read-only schema-bound review.
 
 ## CLI commands (v0)
 
@@ -154,7 +154,7 @@ Ship as plain markdown in `skills/`. Claude Code picks them up when the plugin i
 **v0 — Foundation (shipped)**
 - Repo, Python package scaffold using conda for local development (CI deferred to v0.5)
 - Task schema + state layer + DAG resolver
-- `AgentAdapter` interface; ClaudeCode adapter live; Codex stubbed
+- `AgentAdapter` interface; ClaudeCode adapter live; Codex was stubbed in v0 and is now implemented in v1.3
 - Commands: `init`, `add`, `status`, `run` (sequential)
 - Verify step + per-task logs
 - Skills written: `task-authoring`, `plan-decomposition`

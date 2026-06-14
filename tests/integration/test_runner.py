@@ -517,6 +517,7 @@ def test_review_retry_respects_max_iterations(tmp_path: Path) -> None:
 
     assert get_task(tmp_path, "A").status is TaskStatus.done
     assert len(adapter.executor_prompts) == 2
+    assert latest_run(tmp_path).status == "completed"
 
 
 def test_reviewer_blocked_marks_blocked_and_propagates(tmp_path: Path) -> None:
@@ -546,6 +547,18 @@ def test_max_iterations_stops_dispatching_new_tasks(tmp_path: Path) -> None:
     assert get_task(tmp_path, "A").status is TaskStatus.done
     assert get_task(tmp_path, "B").status is TaskStatus.pending
     assert latest_run(tmp_path).status == "stopped"
+
+
+def test_max_iterations_exactly_drain_queue_records_completed_run(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+    write_task(tmp_path, make_task("A", offset=0))
+    write_task(tmp_path, make_task("B", offset=1))
+
+    drain_queue(tmp_path, MockAdapter(exit_code=0), max_iterations=2)
+
+    assert get_task(tmp_path, "A").status is TaskStatus.done
+    assert get_task(tmp_path, "B").status is TaskStatus.done
+    assert latest_run(tmp_path).status == "completed"
 
 
 def _review_result(
