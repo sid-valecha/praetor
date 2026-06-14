@@ -207,6 +207,39 @@ def test_branch_for_task_rejects_invalid_metadata_branch(scratch_repo: Path) -> 
         branch_for_task("task-meta-branch", scratch_repo)
 
 
+def test_branch_for_task_rejects_metadata_branch_for_wrong_task(
+    scratch_repo: Path,
+) -> None:
+    worktree = create_worktree("task-meta-branch", scratch_repo)
+    metadata_path = worktree.path / ".praetor-meta.json"
+    metadata = json.loads(metadata_path.read_text())
+    metadata["branch"] = "main"
+    metadata_path.write_text(json.dumps(metadata))
+
+    with pytest.raises(WorktreeError, match="does not match task id"):
+        branch_for_task("task-meta-branch", scratch_repo)
+
+
+def test_branch_for_task_rejects_metadata_task_id_mismatch(scratch_repo: Path) -> None:
+    worktree = create_worktree("task-meta-branch", scratch_repo)
+    metadata_path = worktree.path / ".praetor-meta.json"
+    metadata = json.loads(metadata_path.read_text())
+    metadata["task_id"] = "other-task"
+    metadata_path.write_text(json.dumps(metadata))
+
+    with pytest.raises(WorktreeError, match="task_id mismatch"):
+        branch_for_task("task-meta-branch", scratch_repo)
+
+
+def test_path_sensitive_worktree_operations_accept_legacy_uppercase_id(
+    scratch_repo: Path,
+) -> None:
+    worktree = create_worktree("LegacyA", scratch_repo)
+
+    assert worktree.task_id == "LegacyA"
+    assert worktree.branch == "praetor/LegacyA"
+
+
 def _git(cwd: Path, *args: str) -> str:
     completed = subprocess.run(
         ["git", *args],

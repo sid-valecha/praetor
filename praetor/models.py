@@ -7,7 +7,8 @@ from typing import Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
 MAX_TASK_ID_LENGTH = 100
-_TASK_ID_RE = re.compile(r"^[a-z0-9_][a-z0-9_-]{0,99}$")
+_TASK_ID_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_-]{0,99}$")
+_EXISTING_TASK_ID_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}$")
 
 
 def validate_task_id(value: str) -> str:
@@ -28,7 +29,30 @@ def validate_task_id(value: str) -> str:
         or ".." in value
         or not _TASK_ID_RE.fullmatch(value)
     ):
-        msg = "Invalid task id: use lowercase letters, numbers, hyphens, and underscores only"
+        msg = "Invalid task id: use letters, numbers, hyphens, and underscores only"
+        raise ValueError(msg)
+    return value
+
+
+def validate_existing_task_id(value: str) -> str:
+    if not isinstance(value, str):
+        msg = "Invalid task id: must be a string"
+        raise ValueError(msg)
+    if not value:
+        msg = "Invalid task id: must not be empty"
+        raise ValueError(msg)
+    if len(value) > MAX_TASK_ID_LENGTH:
+        msg = f"Invalid task id: must be at most {MAX_TASK_ID_LENGTH} characters"
+        raise ValueError(msg)
+    if (
+        value.startswith("-")
+        or value.startswith("/")
+        or "\\" in value
+        or "/" in value
+        or ".." in value
+        or _EXISTING_TASK_ID_RE.fullmatch(value) is None
+    ):
+        msg = "Invalid task id: use letters, numbers, dots, hyphens, and underscores only"
         raise ValueError(msg)
     return value
 
@@ -66,7 +90,7 @@ class Task(BaseModel):
     @field_validator("id")
     @classmethod
     def id_must_be_safe(cls, value: str) -> str:
-        return validate_task_id(value)
+        return validate_existing_task_id(value)
 
     @field_validator("created")
     @classmethod

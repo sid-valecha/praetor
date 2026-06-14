@@ -128,6 +128,17 @@ def test_list_tasks_returns_sorted_by_created(tmp_path: Path) -> None:
     assert [task.id for task in tasks] == ["001-older", "002-newer"]
 
 
+def test_list_tasks_keeps_legacy_uppercase_task_ids(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+    tasks_dir = tmp_path / ".praetor" / "tasks"
+    legacy = make_task("LegacyA", datetime(2026, 5, 23, 14, 22, tzinfo=UTC))
+    dump_task(legacy, tasks_dir / "LegacyA.md")
+
+    tasks = list_tasks(tmp_path)
+
+    assert [task.id for task in tasks] == ["LegacyA"]
+
+
 def test_get_task_found(tmp_path: Path) -> None:
     init_workspace(tmp_path)
     task = make_task("001-found", datetime(2026, 5, 23, 14, 22, tzinfo=UTC))

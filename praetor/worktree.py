@@ -95,7 +95,11 @@ def list_worktrees(repo_root: Path) -> list[Worktree]:
             continue
         metadata = json.loads(metadata_path.read_text())
         task_id = _validate_task_id(metadata["task_id"])
-        branch = _validate_branch_name(metadata["branch"], repo_root, "worktree branch")
+        branch = _validate_worktree_branch_for_task(
+            metadata["branch"],
+            task_id,
+            repo_root,
+        )
         base_branch = _validate_branch_name(
             metadata["base_branch"],
             repo_root,
@@ -154,7 +158,17 @@ def branch_for_task(task_id: str, repo_root: Path) -> str:
     metadata_path = _metadata_path(worktree_path)
     if metadata_path.exists():
         metadata = json.loads(metadata_path.read_text())
-        return _validate_branch_name(metadata["branch"], repo_root, "worktree branch")
+        recorded_task_id = _validate_task_id(metadata["task_id"])
+        if recorded_task_id != task_id:
+            msg = (
+                f"Worktree metadata task_id mismatch: expected {task_id}, found {recorded_task_id}"
+            )
+            raise WorktreeError(msg)
+        return _validate_worktree_branch_for_task(
+            metadata["branch"],
+            task_id,
+            repo_root,
+        )
     return _branch_name(task_id, repo_root)
 
 
@@ -228,6 +242,14 @@ def _branch_name(task_id: str, repo_root: Path) -> str:
         repo_root,
         "worktree branch",
     )
+
+
+def _allowed_branch_names(task_id: str, repo_root: Path) -> set[str]:
+    task_id = _validate_task_id(task_id)
+    return {
+        _validate_branch_name(f"{_BRANCH_PREFIX}/{task_id}", repo_root, "worktree branch"),
+        _validate_branch_name(f"{_BRANCH_PREFIX}-{task_id}", repo_root, "worktree branch"),
+    }
 
 
 def _ref_exists(ref: str, repo_root: Path) -> bool:
@@ -360,6 +382,14 @@ def _validate_branch_name(value: str, repo_root: Path, label: str) -> str:
         msg = f"Invalid {label}: {value}"
         raise WorktreeError(msg)
     return value
+
+
+def _validate_worktree_branch_for_task(value: str, task_id: str, repo_root: Path) -> str:
+    branch = _validate_branch_name(value, repo_root, "worktree branch")
+    if branch not in _allowed_branch_names(task_id, repo_root):
+        msg = f"Worktree branch does not match task id {task_id}: {branch}"
+        raise WorktreeError(msg)
+    return branch
 
 
 def _validate_ref_name(value: str, label: str) -> str:

@@ -136,7 +136,7 @@ def test_pending_merge_is_needs_owner_with_merge_next_action(tmp_path: Path) -> 
     assert "praetor merge" in item.next_action
 
 
-def test_running_is_needs_owner_with_reset_next_action(tmp_path: Path) -> None:
+def test_running_is_needs_owner_with_cautious_reset_guidance(tmp_path: Path) -> None:
     init_workspace(tmp_path)
     _write_task(tmp_path, _make_task("stuck", TaskStatus.running, verify="pytest"))
 
@@ -145,7 +145,8 @@ def test_running_is_needs_owner_with_reset_next_action(tmp_path: Path) -> None:
     [item] = result.items
     assert item.classification == "needs_owner"
     assert "praetor reset" in item.next_action
-    assert "stale" in item.blocker.lower() or "running" in item.blocker.lower()
+    assert "only if no runner is active" in item.next_action
+    assert "no liveness check" in item.blocker.lower()
 
 
 def test_done_tasks_are_excluded(tmp_path: Path) -> None:

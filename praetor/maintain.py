@@ -81,11 +81,17 @@ def _classify_task(
         return MaintainItem(
             source=source,
             classification="needs_owner",
-            fit="Task is marked running but no live runner is attached.",
-            risk="Stale running state can block dependents and confuse future drains.",
+            fit="Task is marked running; maintain does not verify runner liveness yet.",
+            risk=(
+                "A stale or active running state can block dependents; resetting an "
+                "active task can cause duplicate execution or log overwrites."
+            ),
             proof=_proof_with_verify(task, "Task currently marked running."),
-            blocker="Task is in stale running state; no live runner detected.",
-            next_action=f"praetor reset {task.id}",
+            blocker="Task may be stale, but no liveness check has been performed.",
+            next_action=(
+                "Inspect active runners/logs, then run "
+                f"praetor reset {task.id} only if no runner is active."
+            ),
         )
 
     if status is TaskStatus.pending_merge:
