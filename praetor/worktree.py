@@ -5,6 +5,9 @@ import subprocess
 from pydantic import BaseModel
 
 
+_BRANCH_PREFIX = "praetor"
+
+
 class WorktreeError(RuntimeError):
     """Raised on any git worktree subprocess failure or invariant violation."""
 
@@ -27,7 +30,7 @@ def create_worktree(
     repo_root = repo_root.resolve()
     worktrees_dir = _worktrees_dir(repo_root)
     worktree_path = worktrees_dir / task_id
-    branch = _branch_name(task_id)
+    branch = _branch_name(task_id, repo_root)
 
     if worktree_path.exists():
         msg = f"Worktree path already exists: {worktree_path}"
@@ -105,7 +108,6 @@ def get_worktree(task_id: str, repo_root: Path) -> Worktree | None:
 def remove_worktree(task_id: str, repo_root: Path, force: bool = False) -> None:
     repo_root = repo_root.resolve()
     worktree_path = _worktrees_dir(repo_root) / task_id
-    branch = _branch_name(task_id)
 
     if not worktree_path.exists():
         if force:
@@ -113,12 +115,25 @@ def remove_worktree(task_id: str, repo_root: Path, force: bool = False) -> None:
         msg = f"Worktree path does not exist: {worktree_path}"
         raise WorktreeError(msg)
 
+    branch = branch_for_task(task_id, repo_root)
+
     args = ["worktree", "remove"]
     if force:
         args.append("--force")
     args.append(str(worktree_path))
     _run_git(args, repo_root)
     _delete_branch(branch, repo_root)
+
+
+def branch_for_task(task_id: str, repo_root: Path) -> str:
+    """Return the recorded branch for an existing worktree, or the deterministic
+    branch name we would use to create one if no sidecar exists yet."""
+    repo_root = repo_root.resolve()
+    worktree_path = _worktrees_dir(repo_root) / task_id
+    metadata_path = _metadata_path(worktree_path)
+    if metadata_path.exists():
+        return json.loads(metadata_path.read_text())["branch"]
+    return _branch_name(task_id, repo_root)
 
 
 def _run_git(args: list[str], cwd: Path) -> str:
@@ -169,8 +184,30 @@ def _ignore_metadata_sidecar(worktree_path: Path) -> None:
         exclude_file.write(".praetor-meta.json\n")
 
 
-def _branch_name(task_id: str) -> str:
-    return f"praetor/{task_id}"
+def _branch_name(task_id: str, repo_root: Path) -> str:
+    if _ref_exists(f"refs/heads/{_BRANCH_PREFIX}", repo_root):
+        return f"{_BRANCH_PREFIX}-{task_id}"
+    return f"{_BRANCH_PREFIX}/{task_id}"
+
+
+def _ref_exists(ref: str, repo_root: Path) -> bool:
+    completed = subprocess.run(
+        ["git", "show-ref", "--verify", "--quiet", ref],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode == 0:
+        return True
+    if completed.returncode == 1:
+        return False
+
+    msg = (
+        f"Git command failed: git show-ref --verify --quiet {ref} "
+        f"(exit {completed.returncode}): {completed.stderr.strip()}"
+    )
+    raise WorktreeError(msg)
 
 
 def _branch_exists(branch: str, repo_root: Path) -> bool:

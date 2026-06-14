@@ -143,6 +143,33 @@ def test_worktree_isolation(scratch_repo: Path) -> None:
     assert _git(scratch_repo, "status", "--porcelain") == ""
 
 
+def test_create_worktree_when_praetor_branch_blocks_namespace(scratch_repo: Path) -> None:
+    _git(scratch_repo, "branch", "praetor")
+
+    worktree = create_worktree("task-x", scratch_repo)
+
+    assert worktree.path.is_dir()
+    assert worktree.branch != "praetor/task-x"
+    assert _git(scratch_repo, "branch", "--list", worktree.branch).strip() != ""
+    metadata = json.loads((worktree.path / ".praetor-meta.json").read_text())
+    assert metadata["branch"] == worktree.branch
+    assert _git(scratch_repo, "branch", "--list", "praetor").strip() != ""
+
+
+def test_remove_worktree_cleans_branch_under_namespace_collision(
+    scratch_repo: Path,
+) -> None:
+    _git(scratch_repo, "branch", "praetor")
+    worktree = create_worktree("task-x", scratch_repo)
+    branch = worktree.branch
+
+    remove_worktree("task-x", scratch_repo)
+
+    assert not worktree.path.exists()
+    assert _git(scratch_repo, "branch", "--list", branch).strip() == ""
+    assert _git(scratch_repo, "branch", "--list", "praetor").strip() != ""
+
+
 def test_create_worktree_explicit_sha(scratch_repo: Path) -> None:
     first_sha = _git(scratch_repo, "rev-parse", "HEAD")
     (scratch_repo / "second.txt").write_text("second\n")
