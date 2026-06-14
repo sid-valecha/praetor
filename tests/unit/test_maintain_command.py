@@ -39,7 +39,7 @@ def test_maintain_requires_explicit_once_flag(tmp_path: Path, monkeypatch) -> No
     result = runner.invoke(app, ["maintain"])
 
     assert result.exit_code != 0
-    assert "--once" in result.output
+    assert "praetor maintain currently requires" in result.output
 
 
 def test_maintain_once_exits_zero_with_empty_workspace(tmp_path: Path, monkeypatch) -> None:
