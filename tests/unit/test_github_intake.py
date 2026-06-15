@@ -606,6 +606,47 @@ def test_open_pr_with_top_level_state_still_detects_failing_checks() -> None:
     assert "failing check" in item.proof.lower()
 
 
+def test_open_pr_with_startup_failure_check_is_needs_owner() -> None:
+    def runner(command: list[str]) -> tuple[int, str, str]:
+        if command[:3] == ["gh", "pr", "list"]:
+            return (
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": 406,
+                            "title": "Workflow cannot start",
+                            "url": "https://github.com/octo-org/octo-repo/pull/406",
+                            "reviewDecision": "APPROVED",
+                            "statusCheckRollup": [
+                                {
+                                    "name": "docker build",
+                                    "status": "completed",
+                                    "conclusion": "STARTUP_FAILURE",
+                                },
+                                {
+                                    "context": "legacy-ci",
+                                    "state": "STALE",
+                                },
+                            ],
+                        }
+                    ]
+                ),
+                "",
+            )
+        if command[:3] == ["gh", "api", "graphql"]:
+            return 0, json.dumps(EMPTY_REVIEW_THREADS), ""
+        return 0, "[]", ""
+
+    items = scan_github_intake("octo-org/octo-repo", runner=runner)
+
+    assert len(items) == 1
+    item = items[0]
+    assert item.classification == "needs_owner"
+    assert "docker build" in item.proof
+    assert "startup_failure" in item.proof.lower()
+
+
 def test_open_pr_with_unresolved_review_comment_signal_is_needs_owner() -> None:
     def runner(command: list[str]) -> tuple[int, str, str]:
         if command[:3] == ["gh", "pr", "list"]:

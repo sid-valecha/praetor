@@ -614,6 +614,8 @@ def _is_check_status_failing(node: dict[str, Any]) -> bool:
         "cancelled",
         "action_required",
         "error",
+        "startup_failure",
+        "stale",
     }
     passed = {"success", "passed", "skipped", "neutral", "ok"}
 
@@ -621,7 +623,15 @@ def _is_check_status_failing(node: dict[str, Any]) -> bool:
         return True
     if state and state in failing:
         return True
-    if status and status in {"failed", "failure", "timed_out", "cancelled", "action_required"}:
+    if status and status in {
+        "failed",
+        "failure",
+        "timed_out",
+        "cancelled",
+        "action_required",
+        "startup_failure",
+        "stale",
+    }:
         return True
     if conclusion and state and conclusion == "failure":
         return True
