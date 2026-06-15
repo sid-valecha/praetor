@@ -279,3 +279,50 @@ def test_clean_when_terminal_pr_is_closed_or_merged() -> None:
 
     assert result.state == "clean"
     assert not result.blocked_reasons
+
+
+def test_waiting_when_review_is_required_but_checks_pass() -> None:
+    result = classify_pr_loop_state(_payload({"reviewDecision": "REVIEW_REQUIRED"}))
+
+    assert result.state == "waiting"
+    assert result.waiting_review_items == ["Review is still required."]
+
+
+def test_waiting_when_review_decision_is_missing_but_checks_pass() -> None:
+    payload = _payload()
+    payload.pop("reviewDecision")
+
+    result = classify_pr_loop_state(payload)
+
+    assert result.state == "waiting"
+    assert result.waiting_review_items == ["Review decision is unavailable."]
+
+
+def test_needs_repair_from_nested_status_rollup_contexts() -> None:
+    result = classify_pr_loop_state(
+        _payload(
+            {
+                "statusCheckRollup": {
+                    "nodes": [
+                        {
+                            "commit": {
+                                "statusCheckRollup": {
+                                    "contexts": {
+                                        "nodes": [
+                                            {
+                                                "context": "ci/test",
+                                                "state": "FAILURE",
+                                            }
+                                        ]
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        )
+    )
+
+    assert result.state == "needs_repair"
+    assert result.failing_checks == ["Failing check: ci/test (state=failure)."]

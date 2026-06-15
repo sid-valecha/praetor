@@ -144,13 +144,31 @@ def as_repair_proposal(item: MaintainItem) -> MaintainItem | None:
 
 
 def _proposal_task_id(item: MaintainItem) -> str:
-    seed = f"{item.source}|{item.url or ''}"
+    seed = f"{item.source}|{item.url or ''}|{_proposal_feedback_signature(item)}"
     digest = sha1(seed.encode("utf-8")).hexdigest()[:8]
     source_slug = _slugify_for_task_id(item.source)
     max_slug_length = MAX_TASK_ID_LENGTH - len("maintain-") - 1 - len(digest)
     if max_slug_length < 1:
         max_slug_length = 1
     return f"maintain-{source_slug[:max_slug_length]}-{digest}"
+
+
+def _proposal_feedback_signature(item: MaintainItem) -> str:
+    proof_lines = item.proof.splitlines()
+    if proof_lines and re.match(r"^(?:Pull request|Issue) #\d+:", proof_lines[0]):
+        proof = "\n".join(proof_lines[1:]).strip()
+    else:
+        proof = item.proof.strip()
+
+    context_files = "\0".join(sorted(item.context_files))
+    return "\0".join(
+        [
+            proof,
+            context_files,
+            item.blocker or "",
+            item.next_action,
+        ]
+    )
 
 
 def _proposal_task_body(item: MaintainItem) -> str:
@@ -253,6 +271,8 @@ def _extract_context_files(raw_proof: str) -> list[str]:
         path = (match.group("line_path") or match.group("dotted_path")).strip()
         if not path or path in files:
             continue
+        if not _is_context_file_candidate(path):
+            continue
         if (
             path.startswith("http://")
             or path.startswith("https://")
@@ -262,6 +282,18 @@ def _extract_context_files(raw_proof: str) -> list[str]:
             continue
         files.append(path)
     return files
+
+
+def _is_context_file_candidate(path: str) -> bool:
+    if not any(char.isalpha() for char in path):
+        return False
+    if "/" in path:
+        return True
+    if "." not in path:
+        return True
+
+    suffix = path.rsplit(".", 1)[-1]
+    return any(char.isalpha() for char in suffix)
 
 
 _GITHUB_NUMBER_RE = re.compile(r"#(?P<number>\d+)$")

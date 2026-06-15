@@ -550,6 +550,14 @@ def test_extract_context_files_ignores_bare_url_fragments() -> None:
     assert files == ["README.md"]
 
 
+def test_extract_context_files_ignores_prose_timestamps_and_versions() -> None:
+    proof = "Meeting moved to 10:30 after Python 3.11 started failing in CI."
+
+    files = _extract_context_files(proof)
+
+    assert files == []
+
+
 def test_write_proposals_to_tasks_creates_deterministic_id_and_skips_duplicates(
     tmp_path: Path,
 ) -> None:
@@ -618,6 +626,46 @@ def test_write_proposals_to_tasks_skips_duplicate_after_title_changes(
     assert created_second == []
     assert skipped_second == created_first
     assert len(list_tasks(tmp_path)) == 1
+
+
+def test_write_proposals_to_tasks_creates_new_task_for_new_feedback(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    first_feedback = MaintainItem(
+        source="github:pull_request:octo-org/octo-repo#202",
+        url="https://github.com/octo-org/octo-repo/pull/202",
+        classification="needs_owner",
+        fit="Open PR has unresolved review feedback.",
+        risk="Reviewer requested changes.",
+        proof=(
+            "Pull request #202: Improve docs\n"
+            "Unresolved review thread: src/app.py:42 - Please clarify."
+        ),
+        blocker="Open review feedback must be resolved.",
+        next_action="Owner: resolve review feedback.",
+        title="Address pull request feedback for #202: Improve docs",
+        description="Address first feedback.",
+        context_files=["src/app.py"],
+    )
+    second_feedback = first_feedback.model_copy(
+        update={
+            "proof": (
+                "Pull request #202: Improve docs\n"
+                "Unresolved review thread: tests/test_app.py:7 - Add coverage."
+            ),
+            "description": "Address second feedback.",
+            "context_files": ["tests/test_app.py"],
+        }
+    )
+
+    created_first, skipped_first = write_proposals_to_tasks(tmp_path, [first_feedback])
+    created_second, skipped_second = write_proposals_to_tasks(tmp_path, [second_feedback])
+
+    assert skipped_first == skipped_second == []
+    assert len(created_first) == len(created_second) == 1
+    assert created_first != created_second
+    assert len(list_tasks(tmp_path)) == 2
 
 
 def test_create_task_refuses_to_overwrite_existing_task_with_explicit_id(
