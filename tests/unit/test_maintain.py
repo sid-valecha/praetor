@@ -486,6 +486,36 @@ def test_proposals_from_scan_extracts_review_context_file_for_pr_feedback(
     assert "Open PR has unresolved review feedback." in proposal.description
 
 
+def test_proposals_from_scan_extracts_extensionless_review_context_files(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    item = MaintainItem(
+        source="github:pull_request:octo-org/octo-repo#202",
+        url="https://github.com/octo-org/octo-repo/pull/202",
+        classification="needs_owner",
+        fit="Open PR has unresolved review feedback.",
+        risk="Reviewer requested changes.",
+        proof=(
+            "Pull request #202: Improve build docs\n"
+            "Unresolved review thread: Dockerfile:12 - Pin package versions.\n"
+            "Unresolved review thread: Makefile:8 - Keep targets portable."
+        ),
+        blocker="Open review feedback must be resolved.",
+        next_action="Owner: resolve review feedback.",
+    )
+    result = scan(
+        tmp_path,
+        include_github=True,
+        github_provider=lambda *_args, **_kwargs: [item],
+    )
+
+    proposals = proposals_from_scan(result)
+
+    assert len(proposals) == 1
+    assert proposals[0].context_files == ["Dockerfile", "Makefile"]
+
+
 def test_extract_context_files_ignores_url_fragments() -> None:
     proof = (
         "Unresolved review thread: https://github.com/user/repo/blob/main/src/app.py:42 - "
@@ -495,6 +525,18 @@ def test_extract_context_files_ignores_url_fragments() -> None:
     files = _extract_context_files(proof)
 
     assert files == ["README.md"]
+
+
+def test_extract_context_files_includes_extensionless_paths_with_line_numbers() -> None:
+    proof = (
+        "Unresolved review thread: Dockerfile:12 - Pin package versions.\n"
+        "Unresolved review thread: Makefile:8 - Keep target portable.\n"
+        "Unresolved review thread: scripts/build:19 - Avoid shell-specific flags."
+    )
+
+    files = _extract_context_files(proof)
+
+    assert files == ["Dockerfile", "Makefile", "scripts/build"]
 
 
 def test_extract_context_files_ignores_bare_url_fragments() -> None:

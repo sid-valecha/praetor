@@ -185,7 +185,7 @@ def _extract_subject_from_proof(proof: str, fallback: str) -> str:
 def _extract_context_files(raw_proof: str) -> list[str]:
     files: list[str] = []
     for match in _CONTEXT_FILE_RE.finditer(raw_proof):
-        path = match.group("path").strip()
+        path = (match.group("line_path") or match.group("dotted_path")).strip()
         if not path or path in files:
             continue
         if (
@@ -201,8 +201,12 @@ def _extract_context_files(raw_proof: str) -> list[str]:
 
 _GITHUB_NUMBER_RE = re.compile(r"#(?P<number>\d+)$")
 _CONTEXT_FILE_RE = re.compile(
-    r"(?<!\w)(?P<path>[A-Za-z0-9._/-]+\.[A-Za-z0-9_][A-Za-z0-9._-]*)"
-    r"(?::\d+)?(?!(?::\d+)?\w)",
+    r"(?<![\w./:-])"
+    r"(?:"
+    r"(?P<line_path>[A-Za-z0-9._/-]+):\d+"
+    r"|(?P<dotted_path>[A-Za-z0-9._/-]+\.[A-Za-z0-9_][A-Za-z0-9._-]*)"
+    r")"
+    r"(?!(?::\d+)?\w)",
 )
 _HOST_STYLE_PATH_RE = re.compile(
     r"^[A-Za-z0-9_-]+\.(?:com|org|net|io|co|dev|app|edu|gov|info|me|ai)$"

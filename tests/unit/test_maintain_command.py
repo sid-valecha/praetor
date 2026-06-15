@@ -330,6 +330,53 @@ def test_maintain_once_with_propose_tasks_json_outputs_extended_fields(
     )
 
 
+def test_maintain_once_with_propose_tasks_json_includes_extensionless_context_files(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    proposal = MaintainItem(
+        source="github:pull_request:octo-org/octo-repo#202",
+        url="https://github.com/octo-org/octo-repo/pull/202",
+        classification="needs_owner",
+        fit="Open PR has unresolved review feedback.",
+        risk="Review requested changes.",
+        proof=(
+            "Pull request #202: Improve build docs\n"
+            "Unresolved review thread: Dockerfile:12 - Pin package versions."
+        ),
+        blocker="Open review feedback must be resolved.",
+        next_action="Owner: resolve review feedback.",
+    )
+
+    def fake_scan(
+        repo_root: Path,
+        *,
+        include_github: bool = False,
+        github_pr: int | None = None,
+        github_issue: int | None = None,
+    ):
+        del repo_root, github_pr, github_issue
+        assert include_github
+        from praetor.maintain import MaintainScan
+
+        return MaintainScan(repo_root=str(tmp_path), items=[proposal])
+
+    monkeypatch.setattr("praetor.commands.maintain.scan", fake_scan)
+
+    result = runner.invoke(
+        app,
+        ["maintain", "--once", "--github", "--propose-tasks", "--json"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    [item] = payload["items"]
+    assert item["context_files"] == ["Dockerfile"]
+
+
 def test_maintain_once_with_propose_tasks_respects_github_pr_filter(
     tmp_path: Path,
     monkeypatch,
