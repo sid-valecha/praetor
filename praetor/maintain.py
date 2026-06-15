@@ -87,7 +87,7 @@ def _default_github_provider(
     except ModuleNotFoundError:
         return [
             MaintainItem(
-                source="github",
+                source="github:intake",
                 classification="needs_owner",
                 fit="GitHub intake was requested but the provider is unavailable.",
                 risk="External issue, PR, and CI state cannot be included in this scan.",

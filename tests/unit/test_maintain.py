@@ -1,9 +1,10 @@
+import builtins
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from praetor.frontmatter import dump_task
-from praetor.maintain import MaintainItem, MaintainScan, scan
+from praetor.maintain import MaintainItem, MaintainScan, _default_github_provider, scan
 from praetor.models import Task, TaskStatus
 from praetor.state import init_workspace
 
@@ -64,6 +65,25 @@ def test_scan_includes_github_intake_when_enabled(tmp_path: Path) -> None:
     assert item.source == "github:pr:22"
     assert item.classification == "needs_owner"
     assert "CHANGES_REQUESTED" in item.proof
+
+
+def test_default_github_provider_fallback_uses_github_intake_source(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    original_import = builtins.__import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "praetor.github_intake":
+            raise ModuleNotFoundError(name)
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    [item] = list(_default_github_provider(tmp_path))
+
+    assert item.source == "github:intake"
+    assert item.classification == "needs_owner"
 
 
 def test_ready_pending_task_with_verify_is_autonomous(tmp_path: Path) -> None:

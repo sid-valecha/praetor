@@ -208,6 +208,8 @@ def _run_query(
         return_code, stdout, stderr = runner(command)
     except FileNotFoundError as exc:
         raise _ScanError(f"Cannot run gh for {context}; command missing: {exc}")
+    except subprocess.TimeoutExpired as exc:
+        raise _ScanError(f"Timed out running gh for {context} after {exc.timeout} seconds") from exc
 
     if return_code != 0:
         error = (stderr or "").strip() or f"gh returned exit code {return_code}"
@@ -236,6 +238,8 @@ def _run_object_query(
         return_code, stdout, stderr = runner(command)
     except FileNotFoundError as exc:
         raise _ScanError(f"Cannot run gh for {context}; command missing: {exc}")
+    except subprocess.TimeoutExpired as exc:
+        raise _ScanError(f"Timed out running gh for {context} after {exc.timeout} seconds") from exc
 
     if return_code != 0:
         error = (stderr or "").strip() or f"gh returned exit code {return_code}"
@@ -540,12 +544,26 @@ def _collect_check_failures(raw: dict[str, Any]) -> list[str]:
 
 def _checks_are_passing(raw: dict[str, Any]) -> bool:
     rollup = raw.get("statusCheckRollup")
-    if not isinstance(rollup, dict):
+    return _check_node_is_passing(rollup)
+
+
+def _check_node_is_passing(value: Any) -> bool:
+    if isinstance(value, list):
+        return bool(value) and all(_check_node_is_passing(item) for item in value)
+
+    if not isinstance(value, dict):
         return False
 
-    conclusion = _normalize_lower_text(rollup.get("conclusion"))
-    state = _normalize_lower_text(rollup.get("state"))
-    status = _normalize_lower_text(rollup.get("status"))
+    child_results: list[bool] = []
+    for key in ("checkRuns", "nodes", "checks", "commits", "statusCheckRollup"):
+        if key in value:
+            child_results.append(_check_node_is_passing(value.get(key)))
+    if child_results:
+        return all(child_results)
+
+    conclusion = _normalize_lower_text(value.get("conclusion"))
+    state = _normalize_lower_text(value.get("state"))
+    status = _normalize_lower_text(value.get("status"))
 
     if conclusion in {"success", "passed", "neutral", "skipped"}:
         return True

@@ -1,4 +1,5 @@
 import json
+import subprocess
 
 from praetor.github_intake import scan_github_intake
 
@@ -28,6 +29,19 @@ def test_gh_command_failure_is_reported_as_needs_owner() -> None:
     assert item.classification == "needs_owner"
     assert item.source == "github:intake"
     assert "gh" in item.proof.lower()
+
+
+def test_gh_timeout_is_reported_as_needs_owner() -> None:
+    def runner(command: list[str]) -> tuple[int, str, str]:
+        raise subprocess.TimeoutExpired(command, timeout=15)
+
+    items = scan_github_intake("octo-org/octo-repo", runner=runner)
+
+    assert len(items) == 1
+    item = items[0]
+    assert item.classification == "needs_owner"
+    assert item.source == "github:intake"
+    assert "timed out" in item.proof.lower()
 
 
 def test_open_issue_is_marked_needs_owner() -> None:
@@ -327,6 +341,47 @@ def test_open_pr_approved_with_passing_checks_is_defer() -> None:
     assert item.classification == "defer"
     assert "approved" in item.proof.lower()
     assert "mutation" in item.next_action.lower()
+
+
+def test_open_pr_approved_with_status_check_rollup_array_is_passing() -> None:
+    def runner(command: list[str]) -> tuple[int, str, str]:
+        if command[:3] == ["gh", "pr", "list"]:
+            return (
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": 204,
+                            "title": "Improve docs with array checks",
+                            "url": "https://github.com/octo-org/octo-repo/pull/204",
+                            "reviewDecision": "APPROVED",
+                            "statusCheckRollup": [
+                                {
+                                    "name": "ci",
+                                    "status": "completed",
+                                    "conclusion": "SUCCESS",
+                                },
+                                {
+                                    "context": "lint",
+                                    "state": "SUCCESS",
+                                },
+                            ],
+                        }
+                    ]
+                ),
+                "",
+            )
+        if command[:3] == ["gh", "api", "graphql"]:
+            return 0, json.dumps(EMPTY_REVIEW_THREADS), ""
+        return 0, "[]", ""
+
+    items = scan_github_intake("octo-org/octo-repo", runner=runner)
+
+    assert len(items) == 1
+    item = items[0]
+    assert item.classification == "defer"
+    assert "approved with passing checks" in item.fit
+    assert "Checks: passing" in item.proof
 
 
 def test_open_pr_approved_with_pending_checks_is_pending_not_passing() -> None:
