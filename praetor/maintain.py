@@ -98,7 +98,9 @@ def write_proposals_to_tasks(
     proposals: list[MaintainItem],
 ) -> tuple[list[str], list[str]]:
     """Create task files for proposals using deterministic IDs, skipping duplicates."""
-    existing_task_ids = {task.id for task in list_tasks(repo_root)}
+    existing_tasks = list_tasks(repo_root)
+    existing_tasks_by_id = {task.id: task for task in existing_tasks}
+    existing_task_ids = set(existing_tasks_by_id)
     created_task_ids: list[str] = []
     skipped_task_ids: list[str] = []
 
@@ -106,6 +108,12 @@ def write_proposals_to_tasks(
         task_id = _proposal_task_id(proposal)
         if task_id in existing_task_ids:
             skipped_task_ids.append(task_id)
+            continue
+
+        legacy_task_id = _legacy_proposal_task_id(proposal)
+        legacy_task = existing_tasks_by_id.get(legacy_task_id)
+        if legacy_task is not None and _legacy_task_matches_proposal(legacy_task, proposal):
+            skipped_task_ids.append(legacy_task_id)
             continue
 
         create_task(
@@ -145,12 +153,30 @@ def as_repair_proposal(item: MaintainItem) -> MaintainItem | None:
 
 def _proposal_task_id(item: MaintainItem) -> str:
     seed = f"{item.source}|{item.url or ''}|{_proposal_feedback_signature(item)}"
+    return _proposal_task_id_from_seed(item, seed)
+
+
+def _legacy_proposal_task_id(item: MaintainItem) -> str:
+    seed = f"{item.source}|{item.url or ''}"
+    return _proposal_task_id_from_seed(item, seed)
+
+
+def _proposal_task_id_from_seed(item: MaintainItem, seed: str) -> str:
     digest = sha1(seed.encode("utf-8")).hexdigest()[:8]
     source_slug = _slugify_for_task_id(item.source)
     max_slug_length = MAX_TASK_ID_LENGTH - len("maintain-") - 1 - len(digest)
     if max_slug_length < 1:
         max_slug_length = 1
     return f"maintain-{source_slug[:max_slug_length]}-{digest}"
+
+
+def _legacy_task_matches_proposal(task: Task, proposal: MaintainItem) -> bool:
+    signature = _proposal_feedback_proof(proposal)
+    if not signature:
+        return True
+
+    body = task.body or ""
+    return all(line in body for line in signature.splitlines() if line)
 
 
 def _proposal_feedback_signature(item: MaintainItem) -> str:
@@ -189,6 +215,7 @@ def _is_actionable_pr_proof_line(line: str) -> bool:
             "Unresolved outdated review thread:",
             "Unresolved review signal:",
             "Unresolved review comment:",
+            "Latest review:",
             "Review decision:",
             "Failing check:",
             "Pending check:",
