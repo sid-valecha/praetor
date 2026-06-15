@@ -144,7 +144,7 @@ def as_repair_proposal(item: MaintainItem) -> MaintainItem | None:
 
 
 def _proposal_task_id(item: MaintainItem) -> str:
-    seed = f"{item.source}|{item.title or ''}|{item.url or ''}"
+    seed = f"{item.source}|{item.url or ''}"
     digest = sha1(seed.encode("utf-8")).hexdigest()[:8]
     source_slug = _slugify_for_task_id(item.source)
     max_slug_length = MAX_TASK_ID_LENGTH - len("maintain-") - 1 - len(digest)
