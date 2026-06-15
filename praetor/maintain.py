@@ -110,10 +110,12 @@ def write_proposals_to_tasks(
             skipped_task_ids.append(task_id)
             continue
 
-        legacy_task_id = _legacy_proposal_task_id(proposal)
-        legacy_task = existing_tasks_by_id.get(legacy_task_id)
-        if legacy_task is not None and _legacy_task_matches_proposal(legacy_task, proposal):
-            skipped_task_ids.append(legacy_task_id)
+        covered_task_id = _existing_task_covering_proposal(
+            existing_tasks_by_id.values(),
+            proposal,
+        )
+        if covered_task_id is not None:
+            skipped_task_ids.append(covered_task_id)
             continue
 
         create_task(
@@ -170,7 +172,23 @@ def _proposal_task_id_from_seed(item: MaintainItem, seed: str) -> str:
     return f"maintain-{source_slug[:max_slug_length]}-{digest}"
 
 
-def _legacy_task_matches_proposal(task: Task, proposal: MaintainItem) -> bool:
+def _existing_task_covering_proposal(
+    existing_tasks: Iterable[Task],
+    proposal: MaintainItem,
+) -> str | None:
+    legacy_task_id = _legacy_proposal_task_id(proposal)
+    for task in existing_tasks:
+        if task.id == legacy_task_id and _task_matches_proposal(task, proposal):
+            return task.id
+
+    for task in existing_tasks:
+        if _task_matches_proposal(task, proposal):
+            return task.id
+
+    return None
+
+
+def _task_matches_proposal(task: Task, proposal: MaintainItem) -> bool:
     signature = _proposal_feedback_proof(proposal)
     if not signature:
         return True
@@ -198,9 +216,14 @@ def _proposal_feedback_proof(item: MaintainItem) -> str:
         proof_lines = proof_lines[1:]
 
     if item.source.startswith("github:pull_request:"):
-        actionable_lines = [
-            line.strip() for line in proof_lines if _is_actionable_pr_proof_line(line)
-        ]
+        actionable_lines: list[str] = []
+        collecting_actionable_block = False
+        for line in proof_lines:
+            if _is_actionable_pr_proof_line(line):
+                collecting_actionable_block = True
+                actionable_lines.append(line.strip())
+            elif collecting_actionable_block:
+                actionable_lines.append(line.strip())
         if actionable_lines:
             return "\n".join(actionable_lines)
 

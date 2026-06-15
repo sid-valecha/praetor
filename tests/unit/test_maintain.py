@@ -795,6 +795,90 @@ def test_write_proposals_to_tasks_skips_duplicate_latest_review_after_pr_body_ch
     assert len(list_tasks(tmp_path)) == 1
 
 
+def test_write_proposals_to_tasks_distinguishes_multiline_review_feedback(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    auth_feedback = MaintainItem(
+        source="github:pull_request:octo-org/octo-repo#202",
+        url="https://github.com/octo-org/octo-repo/pull/202",
+        classification="needs_owner",
+        fit="Open PR has requested changes.",
+        risk="Reviewer requested changes.",
+        proof=(
+            "Pull request #202: Improve docs\n"
+            "Latest review: CHANGES_REQUESTED - Please add tests\n"
+            "for auth."
+        ),
+        blocker="Open review feedback must be resolved.",
+        next_action="Owner: resolve review feedback.",
+        title="Address pull request feedback for #202: Improve docs",
+        description="Address auth feedback.",
+    )
+    billing_feedback = auth_feedback.model_copy(
+        update={
+            "proof": (
+                "Pull request #202: Improve docs\n"
+                "Latest review: CHANGES_REQUESTED - Please add tests\n"
+                "for billing."
+            ),
+            "description": "Address billing feedback.",
+        }
+    )
+
+    created_first, skipped_first = write_proposals_to_tasks(tmp_path, [auth_feedback])
+    created_second, skipped_second = write_proposals_to_tasks(tmp_path, [billing_feedback])
+
+    assert skipped_first == skipped_second == []
+    assert len(created_first) == len(created_second) == 1
+    assert created_first != created_second
+    assert len(list_tasks(tmp_path)) == 2
+
+
+def test_write_proposals_to_tasks_skips_remaining_feedback_already_in_existing_task(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    combined_feedback = MaintainItem(
+        source="github:pull_request:octo-org/octo-repo#202",
+        url="https://github.com/octo-org/octo-repo/pull/202",
+        classification="needs_owner",
+        fit="Open PR has unresolved review feedback.",
+        risk="Reviewer requested changes.",
+        proof=(
+            "Pull request #202: Improve docs\n"
+            "Unresolved review thread: src/app.py:42 - Please clarify.\n"
+            "Unresolved review thread: tests/test_app.py:7 - Add coverage."
+        ),
+        blocker="Open review feedback must be resolved.",
+        next_action="Owner: resolve review feedback.",
+        title="Address pull request feedback for #202: Improve docs",
+        description=(
+            "Proof: Pull request #202: Improve docs\n"
+            "Unresolved review thread: src/app.py:42 - Please clarify.\n"
+            "Unresolved review thread: tests/test_app.py:7 - Add coverage."
+        ),
+    )
+    remaining_feedback = combined_feedback.model_copy(
+        update={
+            "proof": (
+                "Pull request #202: Improve docs\n"
+                "Unresolved review thread: tests/test_app.py:7 - Add coverage."
+            ),
+            "description": "Address remaining feedback.",
+        }
+    )
+
+    created_first, skipped_first = write_proposals_to_tasks(tmp_path, [combined_feedback])
+    created_second, skipped_second = write_proposals_to_tasks(tmp_path, [remaining_feedback])
+
+    assert len(created_first) == 1
+    assert skipped_first == []
+    assert created_second == []
+    assert skipped_second == created_first
+    assert len(list_tasks(tmp_path)) == 1
+
+
 def test_create_task_refuses_to_overwrite_existing_task_with_explicit_id(
     tmp_path: Path,
 ) -> None:
