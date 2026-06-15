@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from praetor.frontmatter import dump_task
-from praetor.maintain import MaintainScan, scan
+from praetor.maintain import MaintainItem, MaintainScan, scan
 from praetor.models import Task, TaskStatus
 from praetor.state import init_workspace
 
@@ -17,6 +17,53 @@ def test_scan_returns_empty_items_when_no_tasks(tmp_path: Path) -> None:
     assert result.items == []
     assert result.latest_run is None
     assert result.repo_root == str(tmp_path)
+
+
+def test_scan_excludes_github_intake_by_default(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+
+    def github_provider(repo_root: Path) -> list[MaintainItem]:
+        return [
+            MaintainItem(
+                source="github:issue:1",
+                url="https://github.example/issues/1",
+                classification="needs_owner",
+                fit="Open GitHub issue needs triage.",
+                risk="Untriaged external work can drift from local queue state.",
+                proof="Issue #1 is open.",
+                blocker="Needs owner triage.",
+                next_action="Review issue #1.",
+            ),
+        ]
+
+    result = scan(tmp_path, github_provider=github_provider)
+
+    assert result.items == []
+
+
+def test_scan_includes_github_intake_when_enabled(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+
+    def github_provider(repo_root: Path) -> list[MaintainItem]:
+        return [
+            MaintainItem(
+                source="github:pr:22",
+                url="https://github.example/pulls/22",
+                classification="needs_owner",
+                fit="Open GitHub PR has requested changes.",
+                risk="Review feedback can block merge readiness.",
+                proof="Review decision: CHANGES_REQUESTED.",
+                blocker="Requested changes are unresolved.",
+                next_action="Inspect PR #22 review comments.",
+            ),
+        ]
+
+    result = scan(tmp_path, include_github=True, github_provider=github_provider)
+
+    [item] = result.items
+    assert item.source == "github:pr:22"
+    assert item.classification == "needs_owner"
+    assert "CHANGES_REQUESTED" in item.proof
 
 
 def test_ready_pending_task_with_verify_is_autonomous(tmp_path: Path) -> None:

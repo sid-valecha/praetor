@@ -93,6 +93,50 @@ def test_maintain_once_json_emits_item_list(tmp_path: Path, monkeypatch) -> None
     assert item["source"] == "task:ready-a"
 
 
+def test_maintain_once_does_not_request_github_by_default(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    calls: list[bool] = []
+
+    def fake_scan(repo_root: Path, *, include_github: bool = False):
+        calls.append(include_github)
+        from praetor.maintain import MaintainScan
+
+        return MaintainScan(repo_root=str(repo_root), items=[])
+
+    monkeypatch.setattr("praetor.commands.maintain.scan", fake_scan)
+
+    result = runner.invoke(app, ["maintain", "--once", "--json"])
+
+    assert result.exit_code == 0
+    assert calls == [False]
+
+
+def test_maintain_once_github_requests_github_intake(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    calls: list[bool] = []
+
+    def fake_scan(repo_root: Path, *, include_github: bool = False):
+        calls.append(include_github)
+        from praetor.maintain import MaintainScan
+
+        return MaintainScan(repo_root=str(repo_root), items=[])
+
+    monkeypatch.setattr("praetor.commands.maintain.scan", fake_scan)
+
+    result = runner.invoke(app, ["maintain", "--once", "--github", "--json"])
+
+    assert result.exit_code == 0
+    assert calls == [True]
+
+
 def test_maintain_once_is_read_only(tmp_path: Path, monkeypatch) -> None:
     init_workspace(tmp_path)
     _write_task(tmp_path, _make_task("ready-a", TaskStatus.pending, verify="pytest"))
