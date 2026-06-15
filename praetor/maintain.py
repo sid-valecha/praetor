@@ -11,7 +11,7 @@ from praetor.run_history import latest_run as load_latest_run
 from praetor.state import list_tasks
 
 Classification = Literal["autonomous", "needs_owner", "defer"]
-GithubProvider = Callable[[Path], Iterable["MaintainItem"]]
+GithubProvider = Callable[..., Iterable["MaintainItem"]]
 
 
 class MaintainItem(BaseModel):
@@ -40,6 +40,8 @@ def scan(
     repo_root: Path,
     *,
     include_github: bool = False,
+    github_pr: int | None = None,
+    github_issue: int | None = None,
     github_provider: GithubProvider | None = None,
 ) -> MaintainScan:
     """Read-only scan of local Praetor state for the current repo."""
@@ -53,9 +55,12 @@ def scan(
         if item is not None:
             items.append(item)
 
-    if include_github:
+    if include_github or github_pr is not None or github_issue is not None:
         provider = github_provider or _default_github_provider
-        items.extend(provider(repo_root))
+        if github_pr is None and github_issue is None:
+            items.extend(provider(repo_root))
+        else:
+            items.extend(provider(repo_root, github_pr=github_pr, github_issue=github_issue))
 
     latest_run_record = load_latest_run(repo_root)
     latest_run = (
@@ -71,9 +76,14 @@ def scan(
     )
 
 
-def _default_github_provider(repo_root: Path) -> Iterable[MaintainItem]:
+def _default_github_provider(
+    repo_root: Path,
+    *,
+    github_pr: int | None = None,
+    github_issue: int | None = None,
+) -> Iterable[MaintainItem]:
     try:
-        from praetor.github_intake import scan_github
+        from praetor.github_intake import scan_focused_github, scan_github
     except ModuleNotFoundError:
         return [
             MaintainItem(
@@ -87,7 +97,15 @@ def _default_github_provider(repo_root: Path) -> Iterable[MaintainItem]:
             ),
         ]
 
-    return [MaintainItem(**item.to_maintain_payload()) for item in scan_github(repo_root)]
+    if github_pr is not None or github_issue is not None:
+        raw_items = scan_focused_github(
+            repo_root,
+            pr_number=github_pr,
+            issue_number=github_issue,
+        )
+    else:
+        raw_items = scan_github(repo_root)
+    return [MaintainItem(**item.to_maintain_payload()) for item in raw_items]
 
 
 def _classify_task(

@@ -66,9 +66,14 @@ class _ScanError(RuntimeError):
 def scan_github_intake(
     repo: str | None = None,
     *,
+    issue_number: int | None = None,
+    pr_number: int | None = None,
     runner: GhRunner | None = None,
 ) -> list[GitHubIntakeItem]:
     run = runner or _run_gh_json
+    if issue_number is not None and pr_number is not None:
+        return [_diagnostic_item("Choose only one focused GitHub target: issue or pull request.")]
+
     issue_command = [
         "gh",
         "issue",
@@ -85,15 +90,32 @@ def scan_github_intake(
         "--state",
         "open",
         "--json",
-        "number,title,body,labels,url,reviewDecision,latestReviews,reviews,comments,statusCheckRollup,commits",
+        "number,title,body,labels,url,state,mergedAt,reviewDecision,latestReviews,reviews,comments,statusCheckRollup,commits",
     ]
     if repo is not None:
         issue_command[3:3] = ["--repo", repo]
         pr_command[3:3] = ["--repo", repo]
 
     try:
-        issues = _run_query(run, issue_command, "open issues")
-        pull_requests = _run_query(run, pr_command, "open pull requests")
+        if issue_number is not None:
+            issue = _run_object_query(
+                run,
+                _build_issue_view_command(repo, issue_number),
+                f"issue #{issue_number}",
+            )
+            issues = [issue]
+            pull_requests: list[dict[str, Any]] = []
+        elif pr_number is not None:
+            pull_request = _run_object_query(
+                run,
+                _build_pr_view_command(repo, pr_number),
+                f"pull request #{pr_number}",
+            )
+            issues = []
+            pull_requests = [pull_request]
+        else:
+            issues = _run_query(run, issue_command, "open issues")
+            pull_requests = _run_query(run, pr_command, "open pull requests")
     except _ScanError as exc:
         return [_diagnostic_item(str(exc))]
 
@@ -127,6 +149,50 @@ def scan_github(repo_root: Path) -> list[GitHubIntakeItem]:
         return _run_gh_json(command, cwd=repo_root)
 
     return scan_github_intake(runner=runner)
+
+
+def scan_focused_github(
+    repo_root: Path,
+    *,
+    issue_number: int | None = None,
+    pr_number: int | None = None,
+) -> list[GitHubIntakeItem]:
+    def runner(command: list[str]) -> tuple[int, str, str]:
+        return _run_gh_json(command, cwd=repo_root)
+
+    return scan_github_intake(
+        issue_number=issue_number,
+        pr_number=pr_number,
+        runner=runner,
+    )
+
+
+def _build_issue_view_command(repo: str | None, issue_number: int) -> list[str]:
+    command = [
+        "gh",
+        "issue",
+        "view",
+        str(issue_number),
+        "--json",
+        "number,title,body,labels,url",
+    ]
+    if repo is not None:
+        command[4:4] = ["--repo", repo]
+    return command
+
+
+def _build_pr_view_command(repo: str | None, pr_number: int) -> list[str]:
+    command = [
+        "gh",
+        "pr",
+        "view",
+        str(pr_number),
+        "--json",
+        "number,title,body,labels,url,state,mergedAt,reviewDecision,latestReviews,reviews,comments,statusCheckRollup,commits,mergeStateStatus,mergeable,isDraft",
+    ]
+    if repo is not None:
+        command[4:4] = ["--repo", repo]
+    return command
 
 
 def _run_query(
@@ -250,6 +316,20 @@ def _classify_pull_request(
 
     review_decision = _normalize_review_decision(raw.get("reviewDecision"))
 
+    if _is_pr_merged(raw):
+        if review_signals:
+            proof = proof + "\nHistorical review thread(s) still visible after merge."
+        return GitHubIntakeItem(
+            source=source,
+            url=url,
+            classification="defer",
+            fit="Pull request is already merged; intake is historical.",
+            risk="No active merge-blocking action remains for this PR.",
+            proof=proof + "\nState: merged.",
+            blocker=None,
+            next_action="No action required for this merged PR.",
+        )
+
     if review_signals:
         return GitHubIntakeItem(
             source=source,
@@ -326,6 +406,12 @@ def _resolve_repo_slug(runner: GhRunner) -> str | None:
     if isinstance(owner_login, str) and isinstance(name, str):
         return f"{owner_login}/{name}"
     return None
+
+
+def _is_pr_merged(raw: dict[str, Any]) -> bool:
+    state = _normalize_review_decision(raw.get("state"))
+    merged_at = raw.get("mergedAt")
+    return state == "MERGED" or (isinstance(merged_at, str) and bool(merged_at.strip()))
 
 
 def _fetch_review_thread_signals(

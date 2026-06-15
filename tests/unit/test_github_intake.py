@@ -92,6 +92,36 @@ def test_open_issue_that_mentions_autonomous_work_is_still_needs_owner() -> None
     assert "human review" in item.blocker
 
 
+def test_focused_issue_uses_issue_view() -> None:
+    commands: list[list[str]] = []
+
+    def runner(command: list[str]) -> tuple[int, str, str]:
+        commands.append(command)
+        if command[:3] == ["gh", "issue", "view"]:
+            return (
+                0,
+                json.dumps(
+                    {
+                        "number": 101,
+                        "title": "Add endpoint docs",
+                        "body": "Please document new endpoint.",
+                        "labels": [{"name": "documentation"}],
+                        "url": "https://github.com/octo-org/octo-repo/issues/101",
+                    }
+                ),
+                "",
+            )
+        return 0, "[]", ""
+
+    items = scan_github_intake("octo-org/octo-repo", issue_number=101, runner=runner)
+
+    assert len(items) == 1
+    assert items[0].source == "github:issue:octo-org/octo-repo#101"
+    assert items[0].classification == "needs_owner"
+    assert ["gh", "issue", "view"] == commands[0][:3]
+    assert not any(command[:3] == ["gh", "issue", "list"] for command in commands)
+
+
 def test_pr_list_query_uses_supported_gh_json_fields() -> None:
     commands: list[list[str]] = []
 
@@ -106,6 +136,136 @@ def test_pr_list_query_uses_supported_gh_json_fields() -> None:
     assert "statusCheckRollup" in json_fields
     assert "commits" in json_fields
     assert "checks" not in json_fields
+
+
+def test_focused_pr_uses_pr_view_and_review_threads() -> None:
+    commands: list[list[str]] = []
+
+    def runner(command: list[str]) -> tuple[int, str, str]:
+        commands.append(command)
+        if command[:3] == ["gh", "pr", "view"]:
+            return (
+                0,
+                json.dumps(
+                    {
+                        "number": 202,
+                        "title": "Improve docs",
+                        "body": "Small doc fixes.",
+                        "url": "https://github.com/octo-org/octo-repo/pull/202",
+                        "reviewDecision": "APPROVED",
+                        "statusCheckRollup": {
+                            "state": "COMPLETED",
+                            "conclusion": "SUCCESS",
+                        },
+                    }
+                ),
+                "",
+            )
+        if command[:3] == ["gh", "api", "graphql"]:
+            return (
+                0,
+                json.dumps(
+                    {
+                        "data": {
+                            "repository": {
+                                "pullRequest": {
+                                    "reviewThreads": {
+                                        "nodes": [
+                                            {
+                                                "isResolved": False,
+                                                "comments": {
+                                                    "nodes": [
+                                                        {
+                                                            "body": "Please clarify docs.",
+                                                            "path": "README.md",
+                                                            "line": 7,
+                                                        }
+                                                    ]
+                                                },
+                                            }
+                                        ]
+                                    }
+                                }
+                            }
+                        }
+                    }
+                ),
+                "",
+            )
+        return 0, "[]", ""
+
+    items = scan_github_intake("octo-org/octo-repo", pr_number=202, runner=runner)
+
+    assert len(items) == 1
+    assert items[0].source == "github:pull_request:octo-org/octo-repo#202"
+    assert items[0].classification == "needs_owner"
+    assert "README.md:7" in items[0].proof
+    assert ["gh", "pr", "view"] == commands[0][:3]
+    assert not any(command[:3] == ["gh", "pr", "list"] for command in commands)
+
+
+def test_focused_merged_pr_with_unresolved_threads_is_historical_defer() -> None:
+    def runner(command: list[str]) -> tuple[int, str, str]:
+        if command[:3] == ["gh", "pr", "view"]:
+            return (
+                0,
+                json.dumps(
+                    {
+                        "number": 22,
+                        "title": "Prepare maintainer scan",
+                        "body": "Merged PR.",
+                        "url": "https://github.com/octo-org/octo-repo/pull/22",
+                        "state": "MERGED",
+                        "mergedAt": "2026-06-14T12:00:00Z",
+                        "reviewDecision": "APPROVED",
+                        "statusCheckRollup": {
+                            "state": "COMPLETED",
+                            "conclusion": "SUCCESS",
+                        },
+                    }
+                ),
+                "",
+            )
+        if command[:3] == ["gh", "api", "graphql"]:
+            return (
+                0,
+                json.dumps(
+                    {
+                        "data": {
+                            "repository": {
+                                "pullRequest": {
+                                    "reviewThreads": {
+                                        "nodes": [
+                                            {
+                                                "isResolved": False,
+                                                "comments": {
+                                                    "nodes": [
+                                                        {
+                                                            "body": "Historical review finding.",
+                                                            "path": "praetor/worktree.py",
+                                                        }
+                                                    ]
+                                                },
+                                            }
+                                        ]
+                                    }
+                                }
+                            }
+                        }
+                    }
+                ),
+                "",
+            )
+        return 0, "[]", ""
+
+    items = scan_github_intake("octo-org/octo-repo", pr_number=22, runner=runner)
+
+    assert len(items) == 1
+    item = items[0]
+    assert item.classification == "defer"
+    assert item.blocker is None
+    assert "already merged" in item.fit.lower()
+    assert "historical" in item.proof.lower()
 
 
 def test_open_pr_approved_with_passing_checks_is_defer() -> None:

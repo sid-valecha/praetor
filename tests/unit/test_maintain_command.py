@@ -101,7 +101,14 @@ def test_maintain_once_does_not_request_github_by_default(
     monkeypatch.chdir(tmp_path)
     calls: list[bool] = []
 
-    def fake_scan(repo_root: Path, *, include_github: bool = False):
+    def fake_scan(
+        repo_root: Path,
+        *,
+        include_github: bool = False,
+        github_pr: int | None = None,
+        github_issue: int | None = None,
+    ):
+        del github_pr, github_issue
         calls.append(include_github)
         from praetor.maintain import MaintainScan
 
@@ -123,7 +130,14 @@ def test_maintain_once_github_requests_github_intake(
     monkeypatch.chdir(tmp_path)
     calls: list[bool] = []
 
-    def fake_scan(repo_root: Path, *, include_github: bool = False):
+    def fake_scan(
+        repo_root: Path,
+        *,
+        include_github: bool = False,
+        github_pr: int | None = None,
+        github_issue: int | None = None,
+    ):
+        del github_pr, github_issue
         calls.append(include_github)
         from praetor.maintain import MaintainScan
 
@@ -135,6 +149,78 @@ def test_maintain_once_github_requests_github_intake(
 
     assert result.exit_code == 0
     assert calls == [True]
+
+
+def test_maintain_once_github_pr_requests_focused_pr_intake(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    calls: list[tuple[bool, int | None, int | None]] = []
+
+    def fake_scan(
+        repo_root: Path,
+        *,
+        include_github: bool = False,
+        github_pr: int | None = None,
+        github_issue: int | None = None,
+    ):
+        calls.append((include_github, github_pr, github_issue))
+        from praetor.maintain import MaintainScan
+
+        return MaintainScan(repo_root=str(repo_root), items=[])
+
+    monkeypatch.setattr("praetor.commands.maintain.scan", fake_scan)
+
+    result = runner.invoke(app, ["maintain", "--once", "--github-pr", "22", "--json"])
+
+    assert result.exit_code == 0
+    assert calls == [(True, 22, None)]
+
+
+def test_maintain_once_github_issue_requests_focused_issue_intake(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    calls: list[tuple[bool, int | None, int | None]] = []
+
+    def fake_scan(
+        repo_root: Path,
+        *,
+        include_github: bool = False,
+        github_pr: int | None = None,
+        github_issue: int | None = None,
+    ):
+        calls.append((include_github, github_pr, github_issue))
+        from praetor.maintain import MaintainScan
+
+        return MaintainScan(repo_root=str(repo_root), items=[])
+
+    monkeypatch.setattr("praetor.commands.maintain.scan", fake_scan)
+
+    result = runner.invoke(app, ["maintain", "--once", "--github-issue", "17", "--json"])
+
+    assert result.exit_code == 0
+    assert calls == [(True, None, 17)]
+
+
+def test_maintain_once_rejects_github_pr_and_issue_together(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["maintain", "--once", "--github-pr", "22", "--github-issue", "17"],
+    )
+
+    assert result.exit_code != 0
+    assert "Choose only one" in result.output
 
 
 def test_maintain_once_is_read_only(tmp_path: Path, monkeypatch) -> None:
