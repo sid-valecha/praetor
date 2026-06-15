@@ -136,6 +136,64 @@ def test_focused_issue_uses_issue_view() -> None:
     assert not any(command[:3] == ["gh", "issue", "list"] for command in commands)
 
 
+def test_focused_issue_query_requests_state() -> None:
+    commands: list[list[str]] = []
+
+    def runner(command: list[str]) -> tuple[int, str, str]:
+        commands.append(command)
+        if command[:3] == ["gh", "issue", "view"]:
+            return (
+                0,
+                json.dumps(
+                    {
+                        "number": 101,
+                        "title": "Add endpoint docs",
+                        "body": "Please document new endpoint.",
+                        "labels": [{"name": "documentation"}],
+                        "url": "https://github.com/octo-org/octo-repo/issues/101",
+                        "state": "OPEN",
+                    }
+                ),
+                "",
+            )
+        return 0, "[]", ""
+
+    scan_github_intake("octo-org/octo-repo", issue_number=101, runner=runner)
+
+    issue_command = next(command for command in commands if command[:3] == ["gh", "issue", "view"])
+    json_fields = issue_command[issue_command.index("--json") + 1]
+    assert "state" in json_fields
+
+
+def test_focused_closed_issue_is_historical_defer() -> None:
+    def runner(command: list[str]) -> tuple[int, str, str]:
+        if command[:3] == ["gh", "issue", "view"]:
+            return (
+                0,
+                json.dumps(
+                    {
+                        "number": 103,
+                        "title": "Already handled",
+                        "body": "Resolved elsewhere.",
+                        "labels": [],
+                        "url": "https://github.com/octo-org/octo-repo/issues/103",
+                        "state": "CLOSED",
+                    }
+                ),
+                "",
+            )
+        return 0, "[]", ""
+
+    items = scan_github_intake("octo-org/octo-repo", issue_number=103, runner=runner)
+
+    assert len(items) == 1
+    item = items[0]
+    assert item.classification == "defer"
+    assert item.blocker is None
+    assert "closed" in item.fit.lower()
+    assert "State: closed" in item.proof
+
+
 def test_pr_list_query_uses_supported_gh_json_fields() -> None:
     commands: list[list[str]] = []
 
@@ -296,6 +354,75 @@ def test_focused_merged_pr_with_unresolved_threads_is_historical_defer() -> None
     assert item.blocker is None
     assert "already merged" in item.fit.lower()
     assert "historical" in item.proof.lower()
+
+
+def test_focused_closed_unmerged_pr_with_blockers_is_historical_defer() -> None:
+    def runner(command: list[str]) -> tuple[int, str, str]:
+        if command[:3] == ["gh", "pr", "view"]:
+            return (
+                0,
+                json.dumps(
+                    {
+                        "number": 23,
+                        "title": "Closed experiment",
+                        "body": "Not merged.",
+                        "url": "https://github.com/octo-org/octo-repo/pull/23",
+                        "state": "CLOSED",
+                        "reviewDecision": "CHANGES_REQUESTED",
+                        "latestReviews": [
+                            {
+                                "state": "CHANGES_REQUESTED",
+                                "body": "Please rework this.",
+                            }
+                        ],
+                        "statusCheckRollup": {
+                            "state": "COMPLETED",
+                            "conclusion": "FAILURE",
+                        },
+                    }
+                ),
+                "",
+            )
+        if command[:3] == ["gh", "api", "graphql"]:
+            return (
+                0,
+                json.dumps(
+                    {
+                        "data": {
+                            "repository": {
+                                "pullRequest": {
+                                    "reviewThreads": {
+                                        "nodes": [
+                                            {
+                                                "isResolved": False,
+                                                "comments": {
+                                                    "nodes": [
+                                                        {
+                                                            "body": "Historical review finding.",
+                                                            "path": "praetor/github_intake.py",
+                                                        }
+                                                    ]
+                                                },
+                                            }
+                                        ]
+                                    }
+                                }
+                            }
+                        }
+                    }
+                ),
+                "",
+            )
+        return 0, "[]", ""
+
+    items = scan_github_intake("octo-org/octo-repo", pr_number=23, runner=runner)
+
+    assert len(items) == 1
+    item = items[0]
+    assert item.classification == "defer"
+    assert item.blocker is None
+    assert "closed without merge" in item.fit.lower()
+    assert "State: closed" in item.proof
 
 
 def test_open_pr_approved_with_passing_checks_is_defer() -> None:

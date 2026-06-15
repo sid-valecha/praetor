@@ -178,7 +178,7 @@ def _build_issue_view_command(repo: str | None, issue_number: int) -> list[str]:
         "view",
         str(issue_number),
         "--json",
-        "number,title,body,labels,url",
+        "number,title,body,labels,url,state",
     ]
     if repo is not None:
         command[4:4] = ["--repo", repo]
@@ -286,6 +286,18 @@ def _classify_issue(repo: str, raw: dict[str, Any]) -> GitHubIntakeItem | None:
     if body:
         proof = f"{proof}\n{_truncate(body)}"
 
+    if _is_issue_closed(raw):
+        return GitHubIntakeItem(
+            source=source,
+            url=_as_url(url),
+            classification="defer",
+            fit="Issue is already closed; intake is historical.",
+            risk="No active owner triage remains for this issue.",
+            proof=proof + "\nState: closed.",
+            blocker=None,
+            next_action="No action required for this closed issue.",
+        )
+
     return GitHubIntakeItem(
         source=source,
         url=_as_url(url),
@@ -313,10 +325,6 @@ def _classify_pull_request(
     title = (raw.get("title") or "").strip()
     body = (raw.get("body") or "").strip()
     url = _as_url(raw.get("url"))
-    review_signals = _collect_review_signals(raw)
-    if extra_review_signals:
-        review_signals.extend(extra_review_signals)
-    check_failures = _collect_check_failures(raw)
 
     proof = f"Pull request #{number_text}: {title}" if title else f"Pull request #{number_text}"
     if body:
@@ -325,7 +333,7 @@ def _classify_pull_request(
     review_decision = _normalize_review_decision(raw.get("reviewDecision"))
 
     if _is_pr_merged(raw):
-        if review_signals:
+        if extra_review_signals:
             proof = proof + "\nHistorical review thread(s) still visible after merge."
         return GitHubIntakeItem(
             source=source,
@@ -337,6 +345,23 @@ def _classify_pull_request(
             blocker=None,
             next_action="No action required for this merged PR.",
         )
+
+    if _is_pr_closed_unmerged(raw):
+        return GitHubIntakeItem(
+            source=source,
+            url=url,
+            classification="defer",
+            fit="Pull request is already closed without merge; intake is historical.",
+            risk="No active merge-blocking action remains for this closed PR.",
+            proof=proof + "\nState: closed.",
+            blocker=None,
+            next_action="No action required for this closed PR.",
+        )
+
+    review_signals = _collect_review_signals(raw)
+    if extra_review_signals:
+        review_signals.extend(extra_review_signals)
+    check_failures = _collect_check_failures(raw)
 
     if review_signals:
         return GitHubIntakeItem(
@@ -398,6 +423,11 @@ def _classify_pull_request(
     )
 
 
+def _is_issue_closed(raw: dict[str, Any]) -> bool:
+    state = _normalize_review_decision(raw.get("state"))
+    return state == "CLOSED"
+
+
 def _resolve_repo_slug(runner: GhRunner) -> str | None:
     try:
         data = _run_object_query(
@@ -420,6 +450,11 @@ def _is_pr_merged(raw: dict[str, Any]) -> bool:
     state = _normalize_review_decision(raw.get("state"))
     merged_at = raw.get("mergedAt")
     return state == "MERGED" or (isinstance(merged_at, str) and bool(merged_at.strip()))
+
+
+def _is_pr_closed_unmerged(raw: dict[str, Any]) -> bool:
+    state = _normalize_review_decision(raw.get("state"))
+    return state == "CLOSED" and not _is_pr_merged(raw)
 
 
 def _fetch_review_thread_signals(
