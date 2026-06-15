@@ -479,7 +479,7 @@ def test_maintain_once_with_propose_tasks_requires_write_task_flag(
     init_workspace(tmp_path)
     monkeypatch.chdir(tmp_path)
 
-    result = runner.invoke(app, ["maintain", "--once", "--write-tasks"])
+    result = runner.invoke(app, ["maintain", "--once", "--write-tasks"], color=False)
 
     assert result.exit_code != 0
     assert "--write-tasks requires --propose-tasks." in result.output
