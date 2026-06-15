@@ -154,12 +154,7 @@ def _proposal_task_id(item: MaintainItem) -> str:
 
 
 def _proposal_feedback_signature(item: MaintainItem) -> str:
-    proof_lines = item.proof.splitlines()
-    if proof_lines and re.match(r"^(?:Pull request|Issue) #\d+:", proof_lines[0]):
-        proof = "\n".join(proof_lines[1:]).strip()
-    else:
-        proof = item.proof.strip()
-
+    proof = _proposal_feedback_proof(item)
     context_files = "\0".join(sorted(item.context_files))
     return "\0".join(
         [
@@ -168,6 +163,37 @@ def _proposal_feedback_signature(item: MaintainItem) -> str:
             item.blocker or "",
             item.next_action,
         ]
+    )
+
+
+def _proposal_feedback_proof(item: MaintainItem) -> str:
+    proof_lines = item.proof.splitlines()
+    if proof_lines and re.match(r"^(?:Pull request|Issue) #\d+:", proof_lines[0]):
+        proof_lines = proof_lines[1:]
+
+    if item.source.startswith("github:pull_request:"):
+        actionable_lines = [
+            line.strip() for line in proof_lines if _is_actionable_pr_proof_line(line)
+        ]
+        if actionable_lines:
+            return "\n".join(actionable_lines)
+
+    return "\n".join(proof_lines).strip()
+
+
+def _is_actionable_pr_proof_line(line: str) -> bool:
+    line = line.strip()
+    return line.startswith(
+        (
+            "Unresolved review thread:",
+            "Unresolved outdated review thread:",
+            "Unresolved review signal:",
+            "Unresolved review comment:",
+            "Review decision:",
+            "Failing check:",
+            "Pending check:",
+            "Unknown check state:",
+        )
     )
 
 

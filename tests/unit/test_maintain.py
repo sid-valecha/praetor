@@ -668,6 +668,48 @@ def test_write_proposals_to_tasks_creates_new_task_for_new_feedback(
     assert len(list_tasks(tmp_path)) == 2
 
 
+def test_write_proposals_to_tasks_skips_duplicate_after_pr_body_changes(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    proposal = MaintainItem(
+        source="github:pull_request:octo-org/octo-repo#202",
+        url="https://github.com/octo-org/octo-repo/pull/202",
+        classification="needs_owner",
+        fit="Open PR has unresolved review feedback.",
+        risk="Reviewer requested changes.",
+        proof=(
+            "Pull request #202: Improve docs\n"
+            "Original PR description.\n"
+            "Unresolved review thread: src/app.py:42 - Please clarify."
+        ),
+        blocker="Open review feedback must be resolved.",
+        next_action="Owner: resolve review feedback.",
+        title="Address pull request feedback for #202: Improve docs",
+        description="Address first feedback.",
+        context_files=["src/app.py"],
+    )
+    body_edited = proposal.model_copy(
+        update={
+            "proof": (
+                "Pull request #202: Improve docs\n"
+                "Edited PR description.\n"
+                "Unresolved review thread: src/app.py:42 - Please clarify."
+            ),
+            "description": "Address same feedback after body edit.",
+        }
+    )
+
+    created_first, skipped_first = write_proposals_to_tasks(tmp_path, [proposal])
+    created_second, skipped_second = write_proposals_to_tasks(tmp_path, [body_edited])
+
+    assert len(created_first) == 1
+    assert skipped_first == []
+    assert created_second == []
+    assert skipped_second == created_first
+    assert len(list_tasks(tmp_path)) == 1
+
+
 def test_create_task_refuses_to_overwrite_existing_task_with_explicit_id(
     tmp_path: Path,
 ) -> None:
