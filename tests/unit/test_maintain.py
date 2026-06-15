@@ -426,6 +426,35 @@ def test_proposals_from_scan_skips_github_intake_diagnostics(
     assert proposals[0].source == issue.source
 
 
+def test_proposals_from_scan_skips_pr_review_thread_intake_diagnostics(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    diagnostic = MaintainItem(
+        source="github:pull_request:octo-org/octo-repo#202",
+        url="https://github.com/octo-org/octo-repo/pull/202",
+        classification="needs_owner",
+        fit="Open PR review-thread intake is unavailable.",
+        risk="Review-thread feedback cannot be inspected.",
+        proof=(
+            "Pull request #202: Improve docs\n"
+            "Review threads unavailable: Resource not accessible by integration"
+        ),
+        blocker="Review-thread intake is unavailable.",
+        next_action="Owner: fix GitHub auth/API access and rerun the intake.",
+    )
+
+    result = scan(
+        tmp_path,
+        include_github=True,
+        github_provider=lambda *_args, **_kwargs: [diagnostic],
+    )
+
+    proposals = proposals_from_scan(result)
+
+    assert proposals == []
+
+
 def test_proposals_from_scan_extracts_review_context_file_for_pr_feedback(
     tmp_path: Path,
 ) -> None:

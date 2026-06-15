@@ -97,6 +97,8 @@ def as_repair_proposal(item: MaintainItem) -> MaintainItem | None:
         return None
     if not _is_actionable_github_source(item.source):
         return None
+    if _is_review_thread_intake_diagnostic(item):
+        return None
 
     context_files = _extract_context_files(item.proof)
     return item.model_copy(
@@ -131,6 +133,22 @@ def _proposal_title(item: MaintainItem) -> str:
 
 def _is_actionable_github_source(source: str) -> bool:
     return source.startswith("github:issue:") or source.startswith("github:pull_request:")
+
+
+def _is_review_thread_intake_diagnostic(item: MaintainItem) -> bool:
+    if not item.source.startswith("github:pull_request:"):
+        return False
+
+    fit = item.fit.lower()
+    proof = item.proof.lower()
+    blocker = (item.blocker or "").lower()
+    next_action = item.next_action.lower()
+    return (
+        "review-thread intake is unavailable" in fit
+        or "review-thread intake is unavailable" in blocker
+        or "review threads unavailable:" in proof
+        or "fix github auth/api access and rerun the intake" in next_action
+    )
 
 
 def _proposal_description(item: MaintainItem) -> str:

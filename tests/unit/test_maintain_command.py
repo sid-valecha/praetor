@@ -477,6 +477,65 @@ def test_maintain_once_with_propose_tasks_skips_github_intake_diagnostic(
     assert [item["source"] for item in payload["items"]] == [issue_item.source]
 
 
+def test_maintain_once_with_propose_tasks_skips_pr_review_thread_diagnostic(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    diagnostic_item = MaintainItem(
+        source="github:pull_request:octo-org/octo-repo#202",
+        url="https://github.com/octo-org/octo-repo/pull/202",
+        classification="needs_owner",
+        fit="Open PR review-thread intake is unavailable.",
+        risk="Review-thread feedback cannot be inspected.",
+        proof=(
+            "Pull request #202: Improve docs\n"
+            "Review threads unavailable: Resource not accessible by integration"
+        ),
+        blocker="Review-thread intake is unavailable.",
+        next_action="Owner: fix GitHub auth/API access and rerun the intake.",
+    )
+    review_item = MaintainItem(
+        source="github:pull_request:octo-org/octo-repo#202",
+        url="https://github.com/octo-org/octo-repo/pull/202",
+        classification="needs_owner",
+        fit="Open PR has unresolved review feedback.",
+        risk="Review requested changes.",
+        proof=(
+            "Pull request #202: Improve docs\n"
+            "Unresolved review thread: src/app.py:42 - Please clarify."
+        ),
+        blocker="Open review feedback must be resolved.",
+        next_action="Owner: resolve review feedback.",
+    )
+
+    def fake_scan(
+        repo_root: Path,
+        *,
+        include_github: bool = False,
+        github_pr: int | None = None,
+        github_issue: int | None = None,
+    ):
+        del repo_root, github_pr, github_issue
+        assert include_github
+        from praetor.maintain import MaintainScan
+
+        return MaintainScan(repo_root=str(tmp_path), items=[diagnostic_item, review_item])
+
+    monkeypatch.setattr("praetor.commands.maintain.scan", fake_scan)
+
+    result = runner.invoke(
+        app,
+        ["maintain", "--once", "--github", "--propose-tasks", "--json"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert [item["proof"] for item in payload["items"]] == [review_item.proof]
+
+
 def _snapshot_tree(root: Path) -> dict[str, str]:
     snapshot: dict[str, str] = {}
     for path in sorted(root.rglob("*")):
