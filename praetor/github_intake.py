@@ -522,21 +522,6 @@ def _collect_review_signals(raw: dict[str, Any]) -> list[str]:
             if body:
                 signals.append(f"Unresolved review signal: {body}")
 
-    for review in _to_list(raw.get("reviews")):
-        if not isinstance(review, dict):
-            continue
-        state = _normalize_review_decision(review.get("state"))
-        if state == "CHANGES_REQUESTED":
-            body = _truncate((review.get("body") or "").strip())
-            if body:
-                signals.append(f"Review history: CHANGES_REQUESTED - {body}")
-            else:
-                signals.append("Review history: CHANGES_REQUESTED.")
-        if _is_unresolved(review):
-            body = _truncate((review.get("body") or "").strip())
-            if body:
-                signals.append(f"Unresolved review signal: {body}")
-
     for comment in _to_list(raw.get("comments")):
         if not isinstance(comment, dict):
             continue

@@ -369,6 +369,56 @@ def test_open_pr_with_review_changes_requested_is_needs_owner() -> None:
     assert item.blocker and "review" in item.blocker.lower()
 
 
+def test_historical_review_changes_requested_does_not_block_latest_approval() -> None:
+    def runner(command: list[str]) -> tuple[int, str, str]:
+        if command[:3] == ["gh", "pr", "list"]:
+            return (
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": 304,
+                            "title": "Refactor engine follow-up",
+                            "url": "https://github.com/octo-org/octo-repo/pull/304",
+                            "reviewDecision": "APPROVED",
+                            "latestReviews": [
+                                {
+                                    "state": "APPROVED",
+                                    "body": "Looks good now.",
+                                }
+                            ],
+                            "reviews": [
+                                {
+                                    "state": "CHANGES_REQUESTED",
+                                    "body": "Please split this into smaller changes.",
+                                },
+                                {
+                                    "state": "APPROVED",
+                                    "body": "Looks good now.",
+                                },
+                            ],
+                            "statusCheckRollup": {
+                                "state": "COMPLETED",
+                                "conclusion": "SUCCESS",
+                            },
+                        }
+                    ]
+                ),
+                "",
+            )
+        if command[:3] == ["gh", "api", "graphql"]:
+            return 0, json.dumps(EMPTY_REVIEW_THREADS), ""
+        return 0, "[]", ""
+
+    items = scan_github_intake("octo-org/octo-repo", runner=runner)
+
+    assert len(items) == 1
+    item = items[0]
+    assert item.classification == "defer"
+    assert item.blocker is None
+    assert "approved" in item.proof.lower()
+
+
 def test_open_pr_with_failing_checks_is_needs_owner() -> None:
     def runner(command: list[str]) -> tuple[int, str, str]:
         if command[:3] == ["gh", "pr", "list"]:
