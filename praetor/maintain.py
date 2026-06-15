@@ -1,4 +1,5 @@
 from collections.abc import Callable, Iterable
+from hashlib import sha1
 import re
 from pathlib import Path
 from typing import Literal
@@ -6,10 +7,11 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from praetor.dag import compute_ready_set
-from praetor.models import Task, TaskStatus
+from praetor.models import MAX_TASK_ID_LENGTH, Task, TaskStatus
 from praetor.recovery import latest_review_failure
 from praetor.run_history import latest_run as load_latest_run
 from praetor.state import list_tasks
+from praetor.task_creation import create_task
 
 Classification = Literal["autonomous", "needs_owner", "defer"]
 GithubProvider = Callable[..., Iterable["MaintainItem"]]
@@ -91,6 +93,36 @@ def proposals_from_scan(scan_result: MaintainScan) -> list[MaintainItem]:
     return proposals
 
 
+def write_proposals_to_tasks(
+    repo_root: Path,
+    proposals: list[MaintainItem],
+) -> tuple[list[str], list[str]]:
+    """Create task files for proposals using deterministic IDs, skipping duplicates."""
+    existing_task_ids = {task.id for task in list_tasks(repo_root)}
+    created_task_ids: list[str] = []
+    skipped_task_ids: list[str] = []
+
+    for proposal in proposals:
+        task_id = _proposal_task_id(proposal)
+        if task_id in existing_task_ids:
+            skipped_task_ids.append(task_id)
+            continue
+
+        create_task(
+            repo_root=repo_root,
+            title=proposal.title or proposal.source,
+            depends_on=[],
+            verify=proposal.suggested_verify,
+            context_files=proposal.context_files,
+            body=_proposal_task_body(proposal),
+            task_id=task_id,
+        )
+        created_task_ids.append(task_id)
+        existing_task_ids.add(task_id)
+
+    return created_task_ids, skipped_task_ids
+
+
 def as_repair_proposal(item: MaintainItem) -> MaintainItem | None:
     """Convert a maintain item into a deterministic task-shaped proposal."""
     if item.classification != "needs_owner":
@@ -109,6 +141,39 @@ def as_repair_proposal(item: MaintainItem) -> MaintainItem | None:
             "context_files": context_files,
         }
     )
+
+
+def _proposal_task_id(item: MaintainItem) -> str:
+    seed = f"{item.source}|{item.url or ''}"
+    digest = sha1(seed.encode("utf-8")).hexdigest()[:8]
+    source_slug = _slugify_for_task_id(item.source)
+    max_slug_length = MAX_TASK_ID_LENGTH - len("maintain-") - 1 - len(digest)
+    if max_slug_length < 1:
+        max_slug_length = 1
+    return f"maintain-{source_slug[:max_slug_length]}-{digest}"
+
+
+def _proposal_task_body(item: MaintainItem) -> str:
+    heading = f"# {item.title or item.source}"
+    if item.description is not None:
+        return f"{heading}\n\n{item.description}"
+
+    lines = [
+        heading,
+        "",
+        f"Source: {item.url or item.source}",
+        f"Fit: {item.fit}",
+        f"Risk: {item.risk}",
+        f"Proof: {item.proof}",
+        f"Blocker: {item.blocker or 'No explicit blocker.'}",
+        f"Next action: {item.next_action}",
+    ]
+    return "\n".join(lines)
+
+
+def _slugify_for_task_id(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+    return slug or "proposal"
 
 
 def _proposal_title(item: MaintainItem) -> str:

@@ -17,9 +17,12 @@ def create_task(
     verify: str | None = None,
     review: str = "off",
     merge_strategy: str = "manual",
+    task_id: str | None = None,
+    context_files: list[str] | None = None,
+    body: str | None = None,
 ) -> Task:
     task = Task(
-        id=_task_id_from_title(title),
+        id=task_id or _task_id_from_title(title),
         status=TaskStatus.pending,
         depends_on=depends_on,
         parallel_ok=parallel_ok,
@@ -28,10 +31,15 @@ def create_task(
         review=review,
         merge_strategy=merge_strategy,
         created=datetime.now(UTC),
-        body=f"# {title}\n",
+        context_files=context_files or [],
+        body=f"# {title}\n" if body is None else body,
     )
     init_workspace(repo_root)
-    dump_task(task, repo_root / ".praetor" / "tasks" / f"{task.id}.md")
+    task_path = repo_root / ".praetor" / "tasks" / f"{task.id}.md"
+    if task_path.exists():
+        raise ValueError(f"Task already exists: {task.id}")
+
+    dump_task(task, task_path)
     return task
 
 
