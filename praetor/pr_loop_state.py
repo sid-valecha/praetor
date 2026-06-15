@@ -98,10 +98,11 @@ def _collect_review_thread_diagnostics(raw: Mapping[str, Any]) -> list[str]:
             elif has_next_page is None:
                 diagnostics.append("Review thread payload includes unexpected page state.")
 
-        elif "nodes" in review_threads and not isinstance(review_threads["nodes"], list):
-            diagnostics.append("Review thread payload had invalid `nodes` shape.")
-        elif "nodes" not in review_threads:
+        nodes = review_threads.get("nodes")
+        if "nodes" not in review_threads:
             diagnostics.append("Review thread payload did not include thread nodes.")
+        elif not isinstance(nodes, list):
+            diagnostics.append("Review thread payload had invalid `nodes` shape.")
 
     if isinstance(review_threads, list) and not review_threads:
         diagnostics.append("Review threads payload was empty list.")

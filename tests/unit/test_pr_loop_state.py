@@ -167,6 +167,39 @@ def test_blocked_when_review_threads_are_unavailable() -> None:
     ]
 
 
+def test_blocked_when_page_info_present_but_review_thread_nodes_are_missing() -> None:
+    result = classify_pr_loop_state(
+        _payload(
+            {
+                "reviewThreads": {
+                    "pageInfo": {"hasNextPage": False},
+                },
+                "statusCheckRollup": {"name": "ci", "status": "completed", "conclusion": "success"},
+            }
+        )
+    )
+
+    assert result.state == "blocked"
+    assert result.blocked_reasons == ["Review thread payload did not include thread nodes."]
+
+
+def test_blocked_when_page_info_present_but_review_thread_nodes_are_invalid() -> None:
+    result = classify_pr_loop_state(
+        _payload(
+            {
+                "reviewThreads": {
+                    "pageInfo": {"hasNextPage": False},
+                    "nodes": {"x": 1},
+                },
+                "statusCheckRollup": {"name": "ci", "status": "completed", "conclusion": "success"},
+            }
+        )
+    )
+
+    assert result.state == "blocked"
+    assert result.blocked_reasons == ["Review thread payload had invalid `nodes` shape."]
+
+
 def test_waiting_when_no_checks_are_reported() -> None:
     payload = _payload()
     payload.pop("statusCheckRollup")
