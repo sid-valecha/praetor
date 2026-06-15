@@ -1,5 +1,6 @@
 import builtins
 import json
+import pytest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -9,11 +10,13 @@ from praetor.maintain import (
     MaintainScan,
     _default_github_provider,
     _extract_context_files,
+    write_proposals_to_tasks,
     proposals_from_scan,
     scan,
 )
 from praetor.models import Task, TaskStatus
-from praetor.state import init_workspace
+from praetor.task_creation import create_task
+from praetor.state import init_workspace, list_tasks
 
 
 def test_scan_returns_empty_items_when_no_tasks(tmp_path: Path) -> None:
@@ -545,6 +548,58 @@ def test_extract_context_files_ignores_bare_url_fragments() -> None:
     files = _extract_context_files(proof)
 
     assert files == ["README.md"]
+
+
+def test_write_proposals_to_tasks_creates_deterministic_id_and_skips_duplicates(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    proposal = MaintainItem(
+        source="github:pull_request:octo-org/octo-repo#202",
+        url="https://github.com/octo-org/octo-repo/pull/202",
+        classification="needs_owner",
+        fit="Open PR has unresolved review feedback.",
+        risk="Reviewer requested changes.",
+        proof=(
+            "Pull request #202: Improve build docs\n"
+            "Unresolved review thread: src/app.py:42 - Please clarify behavior."
+        ),
+        blocker="Open review feedback must be resolved.",
+        next_action="Owner: resolve review feedback.",
+        title="Address pull request feedback for #202: Improve build docs",
+        description=(
+            "Source: https://github.com/octo-org/octo-repo/pull/202\n"
+            "Fit: Open PR has unresolved review feedback.\n"
+            "Risk: Reviewer requested changes.\n"
+            "Proof: Pull request #202: Improve build docs\nUnresolved review thread: "
+            "src/app.py:42 - Please clarify behavior.\nBlocker: Open review feedback must be resolved."
+        ),
+        context_files=["src/app.py"],
+        suggested_verify="pytest tests/repo",
+    )
+
+    created_first, skipped_first = write_proposals_to_tasks(tmp_path, [proposal])
+    assert len(created_first) == 1
+    assert skipped_first == []
+
+    created_second, skipped_second = write_proposals_to_tasks(tmp_path, [proposal])
+    assert created_second == []
+    assert skipped_second == created_first
+
+    tasks = list_tasks(tmp_path)
+    assert len(tasks) == 1
+    assert tasks[0].context_files == ["src/app.py"]
+
+
+def test_create_task_refuses_to_overwrite_existing_task_with_explicit_id(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+
+    create_task(repo_root=tmp_path, title="Base", depends_on=[], task_id="same-id")
+
+    with pytest.raises(ValueError, match="Task already exists: same-id"):
+        create_task(repo_root=tmp_path, title="Overwrite", depends_on=[], task_id="same-id")
 
 
 def _snapshot_tree(root: Path) -> dict[str, str]:

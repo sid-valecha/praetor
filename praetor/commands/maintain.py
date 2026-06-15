@@ -9,6 +9,7 @@ from praetor.commands import raise_usage_error, require_workspace
 from praetor.maintain import (
     MaintainItem,
     MaintainScan,
+    write_proposals_to_tasks,
     proposals_from_scan,
     scan,
 )
@@ -48,6 +49,13 @@ def maintain_command(
             help="Convert applicable GitHub findings into task-shaped proposals.",
         ),
     ] = False,
+    write_tasks: Annotated[
+        bool,
+        typer.Option(
+            "--write-tasks",
+            help="Create .praetor task files for deterministic proposals.",
+        ),
+    ] = False,
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Emit the scan result as JSON."),
@@ -60,6 +68,8 @@ def maintain_command(
         raise_usage_error("praetor maintain currently requires --once.")
     if github_pr is not None and github_issue is not None:
         raise_usage_error("Choose only one focused GitHub target: --github-pr or --github-issue.")
+    if write_tasks and not propose_tasks:
+        raise_usage_error("--write-tasks requires --propose-tasks.")
 
     include_github = github or github_pr is not None or github_issue is not None
     result = scan(
@@ -68,22 +78,54 @@ def maintain_command(
         github_pr=github_pr,
         github_issue=github_issue,
     )
+    written_task_ids: list[str] = []
+    skipped_task_ids: list[str] = []
+
     if propose_tasks:
         result = result.model_copy(update={"items": proposals_from_scan(result)})
+        if write_tasks:
+            written_task_ids, skipped_task_ids = write_proposals_to_tasks(
+                repo_root,
+                result.items,
+            )
 
     if json_output:
-        print(json.dumps(result.model_dump(mode="json")))
+        payload = result.model_dump(mode="json")
+        if propose_tasks:
+            payload["write_tasks"] = write_tasks
+            payload["written_task_ids"] = written_task_ids
+            payload["skipped_task_ids"] = skipped_task_ids
+            payload["written_count"] = len(written_task_ids)
+            payload["skipped_count"] = len(skipped_task_ids)
+        print(json.dumps(payload))
         return
 
-    _print_text(result, propose_tasks=propose_tasks)
+    _print_text(
+        result,
+        propose_tasks=propose_tasks,
+        write_task_ids=written_task_ids if write_tasks else None,
+        skipped_task_ids=skipped_task_ids if write_tasks else None,
+    )
 
 
-def _print_text(result: MaintainScan, propose_tasks: bool = False) -> None:
+def _print_text(
+    result: MaintainScan,
+    propose_tasks: bool = False,
+    write_task_ids: list[str] | None = None,
+    skipped_task_ids: list[str] | None = None,
+) -> None:
     if not result.items:
         if propose_tasks:
             console.print("No maintainer proposals found.")
         else:
             console.print("No maintainer items found.")
+        if write_task_ids is not None:
+            if write_task_ids:
+                console.print(f"Written {len(write_task_ids)} maintainer task(s):")
+                for task_id in write_task_ids:
+                    console.print(f"  - {task_id}")
+            elif skipped_task_ids:
+                console.print("No new maintainer tasks were written.")
         if result.latest_run is not None:
             console.print(f"Latest run: {result.latest_run.id} ({result.latest_run.status})")
         return
@@ -104,6 +146,14 @@ def _print_text(result: MaintainScan, propose_tasks: bool = False) -> None:
 
     if result.latest_run is not None:
         console.print(f"Latest run: {result.latest_run.id} ({result.latest_run.status})")
+
+    if write_task_ids is not None:
+        if write_task_ids:
+            console.print(f"Written {len(write_task_ids)} maintainer task(s):")
+            for task_id in write_task_ids:
+                console.print(f"  - {task_id}")
+        elif skipped_task_ids:
+            console.print("No new maintainer tasks were written.")
 
 
 def _print_item(item: MaintainItem) -> None:
