@@ -100,6 +100,7 @@ def scan_github_intake(
         issue_command[3:3] = ["--repo", repo]
         pr_command[3:3] = ["--repo", repo]
 
+    diagnostics: list[GitHubIntakeItem] = []
     try:
         if issue_number is not None:
             issue = _run_object_query(
@@ -118,16 +119,28 @@ def scan_github_intake(
             issues = []
             pull_requests = [pull_request]
         else:
-            issues = _run_query(run, issue_command, "open issues")
-            pull_requests = _run_query(run, pr_command, "open pull requests")
+            try:
+                issues = _run_query(run, issue_command, "open issues")
+            except _ScanError as exc:
+                issues = []
+                if not _is_issues_disabled_error(exc):
+                    diagnostics.append(_diagnostic_item(str(exc)))
+            try:
+                pull_requests = _run_query(run, pr_command, "open pull requests")
+            except _ScanError as exc:
+                pull_requests = []
+                diagnostics.append(_diagnostic_item(str(exc)))
     except _ScanError as exc:
         return [_diagnostic_item(str(exc))]
+
+    if not issues and not pull_requests and diagnostics:
+        return [diagnostics[0]]
 
     repo_slug = repo
     if repo_slug is None and pull_requests:
         repo_slug = _resolve_repo_slug(run)
 
-    items: list[GitHubIntakeItem] = []
+    items: list[GitHubIntakeItem] = list(diagnostics)
     for item in issues:
         parsed = _classify_issue(repo or "current", item)
         if parsed is not None:
@@ -146,6 +159,10 @@ def scan_github_intake(
         if parsed is not None:
             items.append(parsed)
     return items
+
+
+def _is_issues_disabled_error(exc: _ScanError) -> bool:
+    return "issues are disabled" in str(exc).lower()
 
 
 def scan_github(repo_root: Path) -> list[GitHubIntakeItem]:
@@ -493,9 +510,17 @@ def _fetch_review_thread_signals(
 
 
 def _collect_review_thread_signals(data: dict[str, Any]) -> list[str]:
-    pull_request = data.get("data", {}).get("repository", {}).get("pullRequest", {})
+    payload = data.get("data")
+    if not isinstance(payload, dict):
+        return _graphql_unavailable_signal(data)
+
+    repository = payload.get("repository")
+    if not isinstance(repository, dict):
+        return _graphql_unavailable_signal(data)
+
+    pull_request = repository.get("pullRequest")
     if not isinstance(pull_request, dict):
-        return []
+        return _graphql_unavailable_signal(data)
 
     review_threads = pull_request.get("reviewThreads")
     if not isinstance(review_threads, dict):
@@ -523,6 +548,19 @@ def _collect_review_thread_signals(data: dict[str, Any]) -> list[str]:
         else:
             signals.append("Unresolved review thread.")
     return signals
+
+
+def _graphql_unavailable_signal(data: dict[str, Any]) -> list[str]:
+    messages: list[str] = []
+    for error in _to_list(data.get("errors")):
+        if not isinstance(error, dict):
+            continue
+        message = error.get("message")
+        if isinstance(message, str) and message.strip():
+            messages.append(message.strip())
+    if messages:
+        return [f"Review threads unavailable: {'; '.join(messages)}"]
+    return ["Review threads unavailable: GraphQL response did not include pull request data."]
 
 
 def _first_dict(value: object) -> dict[str, Any] | None:

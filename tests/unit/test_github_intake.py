@@ -44,6 +44,42 @@ def test_gh_timeout_is_reported_as_needs_owner() -> None:
     assert "timed out" in item.proof.lower()
 
 
+def test_pr_intake_continues_when_issues_are_disabled() -> None:
+    def runner(command: list[str]) -> tuple[int, str, str]:
+        if command[:3] == ["gh", "issue", "list"]:
+            return 1, "", "GraphQL: Issues are disabled for this repository"
+        if command[:3] == ["gh", "pr", "list"]:
+            return (
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": 202,
+                            "title": "Improve docs",
+                            "url": "https://github.com/octo-org/octo-repo/pull/202",
+                            "reviewDecision": "APPROVED",
+                            "statusCheckRollup": {
+                                "state": "COMPLETED",
+                                "conclusion": "SUCCESS",
+                            },
+                        }
+                    ]
+                ),
+                "",
+            )
+        if command[:3] == ["gh", "api", "graphql"]:
+            return 0, json.dumps(EMPTY_REVIEW_THREADS), ""
+        return 0, "[]", ""
+
+    items = scan_github_intake("octo-org/octo-repo", runner=runner)
+
+    assert len(items) == 1
+    item = items[0]
+    assert item.source == "github:pull_request:octo-org/octo-repo#202"
+    assert item.classification == "defer"
+    assert "approved with passing checks" in item.fit
+
+
 def test_open_issue_is_marked_needs_owner() -> None:
     def runner(command: list[str]) -> tuple[int, str, str]:
         if command[:3] == ["gh", "issue", "list"]:
@@ -916,3 +952,50 @@ def test_open_pr_with_unresolved_graphql_review_thread_is_needs_owner() -> None:
     assert "unresolved review thread" in item.proof.lower()
     assert "README.md:42" in item.proof
     assert "clarify retry behavior" in item.proof
+
+
+def test_nullable_graphql_review_thread_response_is_reported_as_unavailable() -> None:
+    def runner(command: list[str]) -> tuple[int, str, str]:
+        if command[:3] == ["gh", "pr", "list"]:
+            return (
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": 607,
+                            "title": "Polish docs",
+                            "url": "https://github.com/octo-org/octo-repo/pull/607",
+                            "reviewDecision": "APPROVED",
+                            "statusCheckRollup": {
+                                "state": "COMPLETED",
+                                "conclusion": "SUCCESS",
+                            },
+                        }
+                    ]
+                ),
+                "",
+            )
+        if command[:3] == ["gh", "api", "graphql"]:
+            return (
+                0,
+                json.dumps(
+                    {
+                        "data": None,
+                        "errors": [
+                            {
+                                "message": "Resource not accessible by integration",
+                            }
+                        ],
+                    }
+                ),
+                "",
+            )
+        return 0, "[]", ""
+
+    items = scan_github_intake("octo-org/octo-repo", runner=runner)
+
+    assert len(items) == 1
+    item = items[0]
+    assert item.classification == "needs_owner"
+    assert "review threads unavailable" in item.proof.lower()
+    assert "resource not accessible" in item.proof.lower()
