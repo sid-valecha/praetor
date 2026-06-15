@@ -191,7 +191,10 @@ def _existing_task_covering_proposal(
 def _task_matches_proposal(task: Task, proposal: MaintainItem) -> bool:
     signature = _proposal_feedback_proof(proposal)
     if not signature:
-        return True
+        return task.id in {
+            _proposal_task_id(proposal),
+            _legacy_proposal_task_id(proposal),
+        }
 
     body = task.body or ""
     return all(line in body for line in signature.splitlines() if line)

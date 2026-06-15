@@ -879,6 +879,37 @@ def test_write_proposals_to_tasks_skips_remaining_feedback_already_in_existing_t
     assert len(list_tasks(tmp_path)) == 1
 
 
+def test_write_proposals_to_tasks_writes_title_only_issue_with_existing_task(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    create_task(
+        repo_root=tmp_path,
+        title="Existing unrelated task",
+        depends_on=[],
+        task_id="existing-unrelated-task",
+        body="# Existing unrelated task\n",
+    )
+    proposal = MaintainItem(
+        source="github:issue:octo-org/octo-repo#123",
+        url="https://github.com/octo-org/octo-repo/issues/123",
+        classification="needs_owner",
+        fit="Open issue requires owner triage.",
+        risk="No owner review has yet been applied to this request.",
+        proof="Issue #123: Add docs",
+        blocker="Issue is open and user-facing; requires human review.",
+        next_action="Owner: triage issue and create praetor task with verification.",
+        title="Address issue #123: Add docs",
+        description="Address issue.",
+    )
+
+    created, skipped = write_proposals_to_tasks(tmp_path, [proposal])
+
+    assert len(created) == 1
+    assert skipped == []
+    assert len(list_tasks(tmp_path)) == 2
+
+
 def test_create_task_refuses_to_overwrite_existing_task_with_explicit_id(
     tmp_path: Path,
 ) -> None:
