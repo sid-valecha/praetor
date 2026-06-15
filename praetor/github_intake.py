@@ -370,7 +370,7 @@ def _classify_pull_request(
             next_action="Owner: wait for checks to pass or request a remediation action from the author.",
         )
 
-    if review_decision == "APPROVED" and not check_failures:
+    if review_decision == "APPROVED" and _checks_are_passing(raw):
         return GitHubIntakeItem(
             source=source,
             url=url,
@@ -536,6 +536,22 @@ def _collect_check_failures(raw: dict[str, Any]) -> list[str]:
     failures: list[str] = []
     _collect_check_failures_from_node(raw, failures)
     return failures
+
+
+def _checks_are_passing(raw: dict[str, Any]) -> bool:
+    rollup = raw.get("statusCheckRollup")
+    if not isinstance(rollup, dict):
+        return False
+
+    conclusion = _normalize_lower_text(rollup.get("conclusion"))
+    state = _normalize_lower_text(rollup.get("state"))
+    status = _normalize_lower_text(rollup.get("status"))
+
+    if conclusion in {"success", "passed", "neutral", "skipped"}:
+        return True
+    if state in {"success", "passed"}:
+        return True
+    return status in {"success", "passed"}
 
 
 def _collect_check_failures_from_node(value: Any, failures: list[str]) -> None:
