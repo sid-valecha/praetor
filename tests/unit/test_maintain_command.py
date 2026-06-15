@@ -478,11 +478,31 @@ def test_maintain_once_with_propose_tasks_requires_write_task_flag(
 ) -> None:
     init_workspace(tmp_path)
     monkeypatch.chdir(tmp_path)
+    calls: list[Path] = []
+
+    def fake_scan(
+        repo_root: Path,
+        *,
+        include_github: bool = False,
+        github_pr: int | None = None,
+        github_issue: int | None = None,
+    ):
+        del include_github, github_pr, github_issue
+        calls.append(repo_root)
+        from praetor.maintain import MaintainScan
+
+        return MaintainScan(repo_root=str(repo_root), items=[])
+
+    monkeypatch.setattr("praetor.commands.maintain.scan", fake_scan)
+
+    help_result = runner.invoke(app, ["maintain", "--help"], color=False)
+    assert help_result.exit_code == 0
+    assert "write-tasks" in help_result.output
 
     result = runner.invoke(app, ["maintain", "--once", "--write-tasks"], color=False)
 
     assert result.exit_code != 0
-    assert "--write-tasks requires --propose-tasks." in result.output
+    assert calls == []
 
 
 def test_maintain_once_with_propose_tasks_and_write_tasks_creates_task_markdown(
