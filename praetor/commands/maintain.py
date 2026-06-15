@@ -24,6 +24,18 @@ def maintain_command(
         bool,
         typer.Option("--once", help="Run a single read-only maintainer scan."),
     ] = False,
+    github: Annotated[
+        bool,
+        typer.Option("--github", help="Include read-only GitHub issue, PR, and CI intake."),
+    ] = False,
+    github_pr: Annotated[
+        int | None,
+        typer.Option("--github-pr", help="Inspect one GitHub pull request number."),
+    ] = None,
+    github_issue: Annotated[
+        int | None,
+        typer.Option("--github-issue", help="Inspect one GitHub issue number."),
+    ] = None,
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Emit the scan result as JSON."),
@@ -34,8 +46,16 @@ def maintain_command(
 
     if not once:
         raise_usage_error("praetor maintain currently requires --once.")
+    if github_pr is not None and github_issue is not None:
+        raise_usage_error("Choose only one focused GitHub target: --github-pr or --github-issue.")
 
-    result = scan(repo_root)
+    include_github = github or github_pr is not None or github_issue is not None
+    result = scan(
+        repo_root,
+        include_github=include_github,
+        github_pr=github_pr,
+        github_issue=github_issue,
+    )
 
     if json_output:
         print(json.dumps(result.model_dump(mode="json")))

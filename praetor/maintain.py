@@ -1,4 +1,5 @@
 from pathlib import Path
+from collections.abc import Callable, Iterable
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -10,6 +11,7 @@ from praetor.run_history import latest_run as load_latest_run
 from praetor.state import list_tasks
 
 Classification = Literal["autonomous", "needs_owner", "defer"]
+GithubProvider = Callable[..., Iterable["MaintainItem"]]
 
 
 class MaintainItem(BaseModel):
@@ -34,7 +36,14 @@ class MaintainScan(BaseModel):
     latest_run: LatestRunSummary | None = None
 
 
-def scan(repo_root: Path) -> MaintainScan:
+def scan(
+    repo_root: Path,
+    *,
+    include_github: bool = False,
+    github_pr: int | None = None,
+    github_issue: int | None = None,
+    github_provider: GithubProvider | None = None,
+) -> MaintainScan:
     """Read-only scan of local Praetor state for the current repo."""
     tasks = list_tasks(repo_root)
     ready_ids = {task.id for task in compute_ready_set(tasks)}
@@ -45,6 +54,13 @@ def scan(repo_root: Path) -> MaintainScan:
         item = _classify_task(repo_root, task, ready_ids, tasks_by_id)
         if item is not None:
             items.append(item)
+
+    if include_github or github_pr is not None or github_issue is not None:
+        provider = github_provider or _default_github_provider
+        if github_pr is None and github_issue is None:
+            items.extend(provider(repo_root))
+        else:
+            items.extend(provider(repo_root, github_pr=github_pr, github_issue=github_issue))
 
     latest_run_record = load_latest_run(repo_root)
     latest_run = (
@@ -58,6 +74,38 @@ def scan(repo_root: Path) -> MaintainScan:
         items=items,
         latest_run=latest_run,
     )
+
+
+def _default_github_provider(
+    repo_root: Path,
+    *,
+    github_pr: int | None = None,
+    github_issue: int | None = None,
+) -> Iterable[MaintainItem]:
+    try:
+        from praetor.github_intake import scan_focused_github, scan_github
+    except ModuleNotFoundError:
+        return [
+            MaintainItem(
+                source="github:intake",
+                classification="needs_owner",
+                fit="GitHub intake was requested but the provider is unavailable.",
+                risk="External issue, PR, and CI state cannot be included in this scan.",
+                proof="praetor.github_intake could not be imported.",
+                blocker="GitHub provider module is unavailable.",
+                next_action="Run local maintain scan without --github, or install a version with GitHub intake.",
+            ),
+        ]
+
+    if github_pr is not None or github_issue is not None:
+        raw_items = scan_focused_github(
+            repo_root,
+            pr_number=github_pr,
+            issue_number=github_issue,
+        )
+    else:
+        raw_items = scan_github(repo_root)
+    return [MaintainItem(**item.to_maintain_payload()) for item in raw_items]
 
 
 def _classify_task(
