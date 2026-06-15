@@ -80,6 +80,8 @@ def scan_github_intake(
         "list",
         "--state",
         "open",
+        "--limit",
+        "100",
         "--json",
         "number,title,body,labels,url",
     ]
@@ -89,6 +91,8 @@ def scan_github_intake(
         "list",
         "--state",
         "open",
+        "--limit",
+        "100",
         "--json",
         "number,title,body,labels,url,state,mergedAt,reviewDecision,latestReviews,reviews,comments,statusCheckRollup,commits",
     ]
@@ -576,7 +580,7 @@ def _collect_check_failures_from_node(value: Any, failures: list[str]) -> None:
 
 
 def _looks_like_check_object(node: dict[str, Any]) -> bool:
-    return any(key in node for key in ("name", "status", "conclusion", "state"))
+    return any(key in node for key in ("name", "status", "conclusion"))
 
 
 def _is_check_status_failing(node: dict[str, Any]) -> bool:

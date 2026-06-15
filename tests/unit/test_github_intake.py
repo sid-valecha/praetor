@@ -136,6 +136,22 @@ def test_pr_list_query_uses_supported_gh_json_fields() -> None:
     assert "statusCheckRollup" in json_fields
     assert "commits" in json_fields
     assert "checks" not in json_fields
+    assert "--limit" in pr_command
+    assert pr_command[pr_command.index("--limit") + 1] == "100"
+
+
+def test_issue_list_query_uses_explicit_limit() -> None:
+    commands: list[list[str]] = []
+
+    def runner(command: list[str]) -> tuple[int, str, str]:
+        commands.append(command)
+        return 0, "[]", ""
+
+    scan_github_intake("octo-org/octo-repo", runner=runner)
+
+    issue_command = next(command for command in commands if command[:3] == ["gh", "issue", "list"])
+    assert "--limit" in issue_command
+    assert issue_command[issue_command.index("--limit") + 1] == "100"
 
 
 def test_focused_pr_uses_pr_view_and_review_threads() -> None:
@@ -396,6 +412,50 @@ def test_open_pr_with_failing_checks_is_needs_owner() -> None:
     assert "failing" in item.proof.lower()
     assert "unit-tests" in item.proof
     assert item.source == "github:pull_request:octo-org/octo-repo#404"
+
+
+def test_open_pr_with_top_level_state_still_detects_failing_checks() -> None:
+    def runner(command: list[str]) -> tuple[int, str, str]:
+        if command[:3] == ["gh", "pr", "list"]:
+            return (
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": 405,
+                            "title": "WIP task with state",
+                            "url": "https://github.com/octo-org/octo-repo/pull/405",
+                            "state": "OPEN",
+                            "reviewDecision": "APPROVED",
+                            "statusCheckRollup": {
+                                "state": "COMPLETED",
+                                "conclusion": "FAILURE",
+                                "checkRuns": {
+                                    "nodes": [
+                                        {
+                                            "name": "integration-tests",
+                                            "status": "completed",
+                                            "conclusion": "FAILURE",
+                                        }
+                                    ]
+                                },
+                            },
+                        }
+                    ]
+                ),
+                "",
+            )
+        if command[:3] == ["gh", "api", "graphql"]:
+            return 0, json.dumps(EMPTY_REVIEW_THREADS), ""
+        return 0, "[]", ""
+
+    items = scan_github_intake("octo-org/octo-repo", runner=runner)
+
+    assert len(items) == 1
+    item = items[0]
+    assert item.classification == "needs_owner"
+    assert "integration-tests" in item.proof
+    assert "failing check" in item.proof.lower()
 
 
 def test_open_pr_with_unresolved_review_comment_signal_is_needs_owner() -> None:
