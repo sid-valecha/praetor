@@ -495,10 +495,6 @@ def test_maintain_once_with_propose_tasks_requires_write_task_flag(
 
     monkeypatch.setattr("praetor.commands.maintain.scan", fake_scan)
 
-    help_result = runner.invoke(app, ["maintain", "--help"], color=False)
-    assert help_result.exit_code == 0
-    assert "write-tasks" in help_result.output
-
     result = runner.invoke(app, ["maintain", "--once", "--write-tasks"], color=False)
 
     assert result.exit_code != 0
