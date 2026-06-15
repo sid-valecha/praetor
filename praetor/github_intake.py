@@ -17,6 +17,7 @@ query($owner: String!, $name: String!, $number: Int!) {
       reviewThreads(first: 100) {
         nodes {
           isResolved
+          isOutdated
           comments(first: 20) {
             nodes {
               body
@@ -348,9 +349,12 @@ def _classify_pull_request(
         proof = f"{proof}\n{_truncate(body)}"
 
     review_decision = _normalize_review_decision(raw.get("reviewDecision"))
+    extra_review_signals, review_thread_diagnostics = _split_review_thread_signals(
+        extra_review_signals or []
+    )
 
     if _is_pr_merged(raw):
-        if extra_review_signals:
+        if extra_review_signals or review_thread_diagnostics:
             proof = proof + "\nHistorical review thread(s) still visible after merge."
         return GitHubIntakeItem(
             source=source,
@@ -416,6 +420,18 @@ def _classify_pull_request(
             next_action="Owner: wait for checks to pass or request a remediation action from the author.",
         )
 
+    if review_thread_diagnostics:
+        return GitHubIntakeItem(
+            source=source,
+            url=url,
+            classification="needs_owner",
+            fit="Open PR review-thread intake is unavailable.",
+            risk="Review state cannot be fully confirmed until GitHub thread intake succeeds.",
+            proof=proof + "\n" + "\n".join(review_thread_diagnostics),
+            blocker="Review-thread intake is unavailable.",
+            next_action="Owner: fix GitHub auth/API access and rerun the intake.",
+        )
+
     if review_decision == "APPROVED" and _checks_are_passing(raw):
         return GitHubIntakeItem(
             source=source,
@@ -438,6 +454,21 @@ def _classify_pull_request(
         blocker=None,
         next_action="No mutation required now; monitor for final merge conditions.",
     )
+
+
+def _split_review_thread_signals(signals: list[str]) -> tuple[list[str], list[str]]:
+    review_signals: list[str] = []
+    diagnostics: list[str] = []
+    for signal in signals:
+        if _is_review_thread_diagnostic(signal):
+            diagnostics.append(signal)
+        else:
+            review_signals.append(signal)
+    return review_signals, diagnostics
+
+
+def _is_review_thread_diagnostic(signal: str) -> bool:
+    return signal.startswith("Review threads unavailable:")
 
 
 def _is_issue_closed(raw: dict[str, Any]) -> bool:
@@ -529,6 +560,8 @@ def _collect_review_thread_signals(data: dict[str, Any]) -> list[str]:
     signals: list[str] = []
     for thread in _to_list(review_threads.get("nodes")):
         if not isinstance(thread, dict) or not _is_unresolved(thread):
+            continue
+        if thread.get("isOutdated") is True:
             continue
         comments = thread.get("comments")
         comment_nodes = comments.get("nodes") if isinstance(comments, dict) else []

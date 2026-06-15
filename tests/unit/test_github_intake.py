@@ -954,6 +954,71 @@ def test_open_pr_with_unresolved_graphql_review_thread_is_needs_owner() -> None:
     assert "clarify retry behavior" in item.proof
 
 
+def test_outdated_graphql_review_thread_is_ignored() -> None:
+    def runner(command: list[str]) -> tuple[int, str, str]:
+        if command[:3] == ["gh", "pr", "list"]:
+            return (
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": 607,
+                            "title": "Polish docs",
+                            "url": "https://github.com/octo-org/octo-repo/pull/607",
+                            "reviewDecision": "APPROVED",
+                            "statusCheckRollup": {
+                                "state": "COMPLETED",
+                                "conclusion": "SUCCESS",
+                            },
+                        }
+                    ]
+                ),
+                "",
+            )
+        if command[:3] == ["gh", "api", "graphql"]:
+            return (
+                0,
+                json.dumps(
+                    {
+                        "data": {
+                            "repository": {
+                                "pullRequest": {
+                                    "reviewThreads": {
+                                        "nodes": [
+                                            {
+                                                "isResolved": False,
+                                                "isOutdated": True,
+                                                "comments": {
+                                                    "nodes": [
+                                                        {
+                                                            "body": "Superseded finding.",
+                                                            "path": "README.md",
+                                                            "line": 42,
+                                                            "author": {"login": "reviewer"},
+                                                        }
+                                                    ]
+                                                },
+                                            }
+                                        ]
+                                    }
+                                }
+                            }
+                        }
+                    }
+                ),
+                "",
+            )
+        return 0, "[]", ""
+
+    items = scan_github_intake("octo-org/octo-repo", runner=runner)
+
+    assert len(items) == 1
+    item = items[0]
+    assert item.classification == "defer"
+    assert "approved with passing checks" in item.fit
+    assert "superseded finding" not in item.proof.lower()
+
+
 def test_nullable_graphql_review_thread_response_is_reported_as_unavailable() -> None:
     def runner(command: list[str]) -> tuple[int, str, str]:
         if command[:3] == ["gh", "pr", "list"]:
@@ -999,3 +1064,60 @@ def test_nullable_graphql_review_thread_response_is_reported_as_unavailable() ->
     assert item.classification == "needs_owner"
     assert "review threads unavailable" in item.proof.lower()
     assert "resource not accessible" in item.proof.lower()
+
+
+def test_review_thread_unavailable_does_not_mask_failing_checks() -> None:
+    def runner(command: list[str]) -> tuple[int, str, str]:
+        if command[:3] == ["gh", "pr", "list"]:
+            return (
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": 608,
+                            "title": "Polish docs",
+                            "url": "https://github.com/octo-org/octo-repo/pull/608",
+                            "reviewDecision": "APPROVED",
+                            "statusCheckRollup": {
+                                "state": "COMPLETED",
+                                "conclusion": "FAILURE",
+                                "checkRuns": {
+                                    "nodes": [
+                                        {
+                                            "name": "unit-tests",
+                                            "status": "completed",
+                                            "conclusion": "FAILURE",
+                                        }
+                                    ]
+                                },
+                            },
+                        }
+                    ]
+                ),
+                "",
+            )
+        if command[:3] == ["gh", "api", "graphql"]:
+            return (
+                0,
+                json.dumps(
+                    {
+                        "data": None,
+                        "errors": [
+                            {
+                                "message": "Resource not accessible by integration",
+                            }
+                        ],
+                    }
+                ),
+                "",
+            )
+        return 0, "[]", ""
+
+    items = scan_github_intake("octo-org/octo-repo", runner=runner)
+
+    assert len(items) == 1
+    item = items[0]
+    assert item.classification == "needs_owner"
+    assert "failing checks" in item.fit.lower()
+    assert "unit-tests" in item.proof
+    assert "review feedback" not in item.fit.lower()
