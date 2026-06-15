@@ -561,25 +561,26 @@ def _collect_review_thread_signals(data: dict[str, Any]) -> list[str]:
     for thread in _to_list(review_threads.get("nodes")):
         if not isinstance(thread, dict) or not _is_unresolved(thread):
             continue
-        if thread.get("isOutdated") is True:
-            continue
+        thread_kind = (
+            "outdated review thread" if thread.get("isOutdated") is True else "review thread"
+        )
         comments = thread.get("comments")
         comment_nodes = comments.get("nodes") if isinstance(comments, dict) else []
         comment = _first_dict(comment_nodes)
         if comment is None:
-            signals.append("Unresolved review thread.")
+            signals.append(f"Unresolved {thread_kind}.")
             continue
 
         location = _format_review_comment_location(comment)
         body = _truncate((comment.get("body") or "").strip())
         if location and body:
-            signals.append(f"Unresolved review thread: {location} - {body}")
+            signals.append(f"Unresolved {thread_kind}: {location} - {body}")
         elif location:
-            signals.append(f"Unresolved review thread: {location}")
+            signals.append(f"Unresolved {thread_kind}: {location}")
         elif body:
-            signals.append(f"Unresolved review thread: {body}")
+            signals.append(f"Unresolved {thread_kind}: {body}")
         else:
-            signals.append("Unresolved review thread.")
+            signals.append(f"Unresolved {thread_kind}.")
     return signals
 
 

@@ -954,7 +954,7 @@ def test_open_pr_with_unresolved_graphql_review_thread_is_needs_owner() -> None:
     assert "clarify retry behavior" in item.proof
 
 
-def test_outdated_graphql_review_thread_is_ignored() -> None:
+def test_unresolved_outdated_graphql_review_thread_is_reported() -> None:
     def runner(command: list[str]) -> tuple[int, str, str]:
         if command[:3] == ["gh", "pr", "list"]:
             return (
@@ -1014,9 +1014,10 @@ def test_outdated_graphql_review_thread_is_ignored() -> None:
 
     assert len(items) == 1
     item = items[0]
-    assert item.classification == "defer"
-    assert "approved with passing checks" in item.fit
-    assert "superseded finding" not in item.proof.lower()
+    assert item.classification == "needs_owner"
+    assert "review feedback" in item.fit.lower()
+    assert "unresolved outdated review thread" in item.proof.lower()
+    assert "superseded finding" in item.proof.lower()
 
 
 def test_nullable_graphql_review_thread_response_is_reported_as_unavailable() -> None:
