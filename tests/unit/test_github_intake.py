@@ -427,6 +427,48 @@ def test_open_pr_approved_with_pending_checks_is_pending_not_passing() -> None:
     assert "Checks: passing" not in item.proof
 
 
+def test_open_pr_with_pending_rollup_and_successful_children_is_not_passing() -> None:
+    def runner(command: list[str]) -> tuple[int, str, str]:
+        if command[:3] == ["gh", "pr", "list"]:
+            return (
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": 204,
+                            "title": "Improve docs while required CI is expected",
+                            "url": "https://github.com/octo-org/octo-repo/pull/204",
+                            "reviewDecision": "APPROVED",
+                            "statusCheckRollup": {
+                                "state": "PENDING",
+                                "checkRuns": {
+                                    "nodes": [
+                                        {
+                                            "name": "ci",
+                                            "status": "completed",
+                                            "conclusion": "SUCCESS",
+                                        },
+                                    ]
+                                },
+                            },
+                        }
+                    ]
+                ),
+                "",
+            )
+        if command[:3] == ["gh", "api", "graphql"]:
+            return 0, json.dumps(EMPTY_REVIEW_THREADS), ""
+        return 0, "[]", ""
+
+    items = scan_github_intake("octo-org/octo-repo", runner=runner)
+
+    assert len(items) == 1
+    item = items[0]
+    assert item.classification == "defer"
+    assert "pending review/check finalization" in item.fit
+    assert "Checks: passing" not in item.proof
+
+
 def test_open_pr_with_review_changes_requested_is_needs_owner() -> None:
     def runner(command: list[str]) -> tuple[int, str, str]:
         if command[:3] == ["gh", "pr", "list"]:

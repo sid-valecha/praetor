@@ -554,16 +554,23 @@ def _check_node_is_passing(value: Any) -> bool:
     if not isinstance(value, dict):
         return False
 
+    conclusion = _normalize_lower_text(value.get("conclusion"))
+    state = _normalize_lower_text(value.get("state"))
+    status = _normalize_lower_text(value.get("status"))
+
+    if conclusion and conclusion not in {"success", "passed", "neutral", "skipped"}:
+        return False
+    if state and state not in {"success", "passed", "completed"}:
+        return False
+    if status and status not in {"success", "passed", "completed"}:
+        return False
+
     child_results: list[bool] = []
     for key in ("checkRuns", "nodes", "checks", "commits", "statusCheckRollup"):
         if key in value:
             child_results.append(_check_node_is_passing(value.get(key)))
     if child_results:
         return all(child_results)
-
-    conclusion = _normalize_lower_text(value.get("conclusion"))
-    state = _normalize_lower_text(value.get("state"))
-    status = _normalize_lower_text(value.get("status"))
 
     if conclusion in {"success", "passed", "neutral", "skipped"}:
         return True
