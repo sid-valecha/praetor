@@ -4,7 +4,14 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from praetor.frontmatter import dump_task
-from praetor.maintain import MaintainItem, MaintainScan, _default_github_provider, scan
+from praetor.maintain import (
+    MaintainItem,
+    MaintainScan,
+    _default_github_provider,
+    _extract_context_files,
+    proposals_from_scan,
+    scan,
+)
 from praetor.models import Task, TaskStatus
 from praetor.state import init_workspace
 
@@ -255,6 +262,182 @@ def test_scan_is_read_only(tmp_path: Path) -> None:
 
     after = _snapshot_tree(praetor_dir)
     assert before == after
+
+
+def test_proposals_from_scan_extracts_context_and_description_for_github_issue(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    item = MaintainItem(
+        source="github:issue:octo-org/octo-repo#101",
+        url="https://github.com/octo-org/octo-repo/issues/101",
+        classification="needs_owner",
+        fit="Open issue requires owner triage.",
+        risk="Action not yet taken.",
+        proof="Issue #101: Add endpoint docs\nPlease document new endpoint.",
+        blocker="Needs owner triage.",
+        next_action="Owner: triage issue.",
+    )
+    result = scan(
+        tmp_path,
+        include_github=True,
+        github_provider=lambda *_args, **_kwargs: [item],
+    )
+
+    proposals = proposals_from_scan(result)
+
+    assert len(proposals) == 1
+    proposal = proposals[0]
+    assert proposal.title == "Address issue #101: Add endpoint docs"
+    assert proposal.description is not None
+    assert proposal.description.startswith(
+        "Source: https://github.com/octo-org/octo-repo/issues/101"
+    )
+    assert proposal.suggested_verify is None
+    assert proposal.context_files == []
+
+
+def test_proposals_from_scan_filters_only_github_needs_owner_items(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    local_item = MaintainItem(
+        source="task:ready-a",
+        classification="needs_owner",
+        fit="Local task with missing verify.",
+        risk="Local execution requires owner action.",
+        proof="Task ready-a is pending without a verifier.",
+        blocker="Missing verify.",
+        next_action="Owner: add verify command.",
+    )
+    github_item = MaintainItem(
+        source="github:issue:octo-org/octo-repo#99",
+        url="https://github.com/octo-org/octo-repo/issues/99",
+        classification="needs_owner",
+        fit="Open issue requires owner triage.",
+        risk="No owner review has yet been applied to this request.",
+        proof="Issue #99: Add caching",
+        blocker="Issue is open and user-facing; requires human review.",
+        next_action="Owner: triage issue and create praetor task with verification.",
+    )
+    not_owner_item = MaintainItem(
+        source="github:issue:octo-org/octo-repo#98",
+        classification="defer",
+        fit="Open issue resolved.",
+        risk="Already done.",
+        proof="Issue #98: Close old thread.",
+        blocker=None,
+        next_action="No action needed.",
+    )
+
+    result = scan(
+        tmp_path,
+        include_github=True,
+        github_provider=lambda *_args, **_kwargs: [local_item, github_item, not_owner_item],
+    )
+
+    proposals = proposals_from_scan(result)
+
+    assert len(proposals) == 1
+    assert proposals[0].source == github_item.source
+
+
+def test_proposals_from_scan_preserves_item_order_for_multiple_github_items(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    issue = MaintainItem(
+        source="github:issue:octo-org/octo-repo#101",
+        url="https://github.com/octo-org/octo-repo/issues/101",
+        classification="needs_owner",
+        fit="Open issue requires owner triage.",
+        risk="No owner review has yet been applied to this request.",
+        proof="Issue #101: Add endpoint docs\nPlease document new endpoint.",
+        blocker="Needs owner triage.",
+        next_action="Owner: triage issue.",
+    )
+    task = MaintainItem(
+        source="task:ready-a",
+        classification="needs_owner",
+        fit="Local task with missing verify.",
+        risk="Local execution requires owner action.",
+        proof="Task ready-a is pending without a verifier.",
+        blocker="Missing verify.",
+        next_action="Owner: add verify command.",
+    )
+    pr = MaintainItem(
+        source="github:pull_request:octo-org/octo-repo#202",
+        url="https://github.com/octo-org/octo-repo/pull/202",
+        classification="needs_owner",
+        fit="Open PR has review feedback that needs owner action.",
+        risk="Applying changes without review closure can introduce regressions.",
+        proof="Pull request #202: Improve docs",
+        blocker="Open review feedback must be resolved.",
+        next_action="Owner: resolve review feedback.",
+    )
+    result = scan(
+        tmp_path,
+        include_github=True,
+        github_provider=lambda *_args, **_kwargs: [issue, task, pr],
+    )
+
+    proposals = proposals_from_scan(result)
+
+    assert len(proposals) == 2
+    assert proposals[0].source == issue.source
+    assert proposals[1].source == pr.source
+    assert proposals[0].title == "Address issue #101: Add endpoint docs"
+    assert proposals[1].title == "Address pull request feedback for #202: Improve docs"
+
+
+def test_proposals_from_scan_extracts_review_context_file_for_pr_feedback(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    item = MaintainItem(
+        source="github:pull_request:octo-org/octo-repo#202",
+        url="https://github.com/octo-org/octo-repo/pull/202",
+        classification="needs_owner",
+        fit="Open PR has unresolved review feedback.",
+        risk="Reviewer requested changes.",
+        proof="Pull request #202: Improve docs\nUnresolved review thread: src/app.py:42 - Please clarify behavior.",
+        blocker="Open review feedback must be resolved.",
+        next_action="Owner: resolve review feedback.",
+    )
+    result = scan(
+        tmp_path,
+        include_github=True,
+        github_provider=lambda *_args, **_kwargs: [item],
+    )
+
+    proposals = proposals_from_scan(result)
+
+    assert len(proposals) == 1
+    proposal = proposals[0]
+    assert proposal.title == "Address pull request feedback for #202: Improve docs"
+    assert proposal.context_files == ["src/app.py"]
+    assert proposal.suggested_verify is None
+    assert proposal.description is not None
+    assert "Open PR has unresolved review feedback." in proposal.description
+
+
+def test_extract_context_files_ignores_url_fragments() -> None:
+    proof = (
+        "Unresolved review thread: https://github.com/user/repo/blob/main/src/app.py:42 - "
+        "see also README.md:7"
+    )
+
+    files = _extract_context_files(proof)
+
+    assert files == ["README.md"]
+
+
+def test_extract_context_files_ignores_bare_url_fragments() -> None:
+    proof = "Check github.com/user/repo/blob/main/src/app.py:42 and README.md:7"
+
+    files = _extract_context_files(proof)
+
+    assert files == ["README.md"]
 
 
 def _snapshot_tree(root: Path) -> dict[str, str]:

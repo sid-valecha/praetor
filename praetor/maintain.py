@@ -1,5 +1,6 @@
-from pathlib import Path
 from collections.abc import Callable, Iterable
+import re
+from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -23,6 +24,10 @@ class MaintainItem(BaseModel):
     proof: str
     blocker: str | None = None
     next_action: str
+    title: str | None = None
+    description: str | None = None
+    suggested_verify: str | None = None
+    context_files: list[str] = Field(default_factory=list)
 
 
 class LatestRunSummary(BaseModel):
@@ -74,6 +79,112 @@ def scan(
         items=items,
         latest_run=latest_run,
     )
+
+
+def proposals_from_scan(scan_result: MaintainScan) -> list[MaintainItem]:
+    """Return deterministic repair proposals from deterministic scan findings."""
+    proposals: list[MaintainItem] = []
+    for item in scan_result.items:
+        proposal = as_repair_proposal(item)
+        if proposal is not None:
+            proposals.append(proposal)
+    return proposals
+
+
+def as_repair_proposal(item: MaintainItem) -> MaintainItem | None:
+    """Convert a maintain item into a deterministic task-shaped proposal."""
+    if item.classification != "needs_owner":
+        return None
+    if not item.source.startswith("github:"):
+        return None
+
+    context_files = _extract_context_files(item.proof)
+    return item.model_copy(
+        update={
+            "title": _proposal_title(item),
+            "description": _proposal_description(item),
+            "suggested_verify": _infer_suggested_verify(item),
+            "context_files": context_files,
+        }
+    )
+
+
+def _proposal_title(item: MaintainItem) -> str:
+    if item.source.startswith("github:pull_request:"):
+        number = _extract_github_number(item.source) or "PR"
+        summary = _extract_subject_from_proof(item.proof, "Pull request")
+        return f"Address pull request feedback for #{number}: {summary}"
+
+    if item.source.startswith("github:issue:"):
+        number = _extract_github_number(item.source) or "issue"
+        summary = _extract_subject_from_proof(item.proof, "Issue")
+        return f"Address issue #{number}: {summary}"
+
+    if item.source.startswith("github:"):
+        number = _extract_github_number(item.source)
+        if number is not None:
+            return f"Address GitHub item #{number}"
+        return f"Address GitHub item: {item.source}"
+
+    return item.source
+
+
+def _proposal_description(item: MaintainItem) -> str:
+    description_lines = [
+        f"Source: {item.url or item.source}",
+        f"Fit: {item.fit}",
+        f"Risk: {item.risk}",
+        f"Proof: {item.proof}",
+        f"Blocker: {item.blocker or 'No explicit blocker.'}",
+    ]
+    return "\n".join(description_lines)
+
+
+def _infer_suggested_verify(item: MaintainItem) -> str | None:
+    del item
+    return None
+
+
+def _extract_github_number(source: str) -> str | None:
+    match = _GITHUB_NUMBER_RE.search(source)
+    if match is None:
+        return None
+    return match.group("number")
+
+
+def _extract_subject_from_proof(proof: str, fallback: str) -> str:
+    first_line = proof.splitlines()[0] if proof else ""
+    if ":" in first_line:
+        _, _, title = first_line.partition(": ")
+        return title.strip() or fallback
+    return fallback
+
+
+def _extract_context_files(raw_proof: str) -> list[str]:
+    files: list[str] = []
+    for match in _CONTEXT_FILE_RE.finditer(raw_proof):
+        path = match.group("path").strip()
+        if not path or path in files:
+            continue
+        if (
+            path.startswith("http://")
+            or path.startswith("https://")
+            or path.startswith("//")
+            or _HOST_STYLE_PATH_RE.match(path.split("/")[0])
+        ):
+            continue
+        files.append(path)
+    return files
+
+
+_GITHUB_NUMBER_RE = re.compile(r"#(?P<number>\d+)$")
+_CONTEXT_FILE_RE = re.compile(
+    r"(?<!\w)(?P<path>[A-Za-z0-9._/-]+\.[A-Za-z0-9_][A-Za-z0-9._-]*)"
+    r"(?::\d+)?(?!(?::\d+)?\w)",
+)
+_HOST_STYLE_PATH_RE = re.compile(
+    r"^[A-Za-z0-9_-]+\.(?:com|org|net|io|co|dev|app|edu|gov|info|me|ai)$"
+)
 
 
 def _default_github_provider(

@@ -6,7 +6,12 @@ from rich.console import Console
 import typer
 
 from praetor.commands import raise_usage_error, require_workspace
-from praetor.maintain import MaintainItem, MaintainScan, scan
+from praetor.maintain import (
+    MaintainItem,
+    MaintainScan,
+    proposals_from_scan,
+    scan,
+)
 
 console = Console()
 
@@ -36,6 +41,13 @@ def maintain_command(
         int | None,
         typer.Option("--github-issue", help="Inspect one GitHub issue number."),
     ] = None,
+    propose_tasks: Annotated[
+        bool,
+        typer.Option(
+            "--propose-tasks",
+            help="Convert applicable GitHub findings into task-shaped proposals.",
+        ),
+    ] = False,
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Emit the scan result as JSON."),
@@ -56,17 +68,22 @@ def maintain_command(
         github_pr=github_pr,
         github_issue=github_issue,
     )
+    if propose_tasks:
+        result = result.model_copy(update={"items": proposals_from_scan(result)})
 
     if json_output:
         print(json.dumps(result.model_dump(mode="json")))
         return
 
-    _print_text(result)
+    _print_text(result, propose_tasks=propose_tasks)
 
 
-def _print_text(result: MaintainScan) -> None:
+def _print_text(result: MaintainScan, propose_tasks: bool = False) -> None:
     if not result.items:
-        console.print("No maintainer items found.")
+        if propose_tasks:
+            console.print("No maintainer proposals found.")
+        else:
+            console.print("No maintainer items found.")
         if result.latest_run is not None:
             console.print(f"Latest run: {result.latest_run.id} ({result.latest_run.status})")
         return
@@ -98,4 +115,15 @@ def _print_item(item: MaintainItem) -> None:
         console.print(f"  proof: {line}")
     if item.blocker:
         console.print(f"  blocker: {item.blocker}")
+    if item.title:
+        console.print(f"  title: {item.title}")
+    if item.description:
+        description_lines = item.description.splitlines()
+        for index, line in enumerate(description_lines):
+            prefix = "  description: " if index == 0 else "  "
+            console.print(f"{prefix}{line}")
+    if item.context_files:
+        console.print(f"  context_files: {', '.join(item.context_files)}")
+    if item.suggested_verify:
+        console.print(f"  suggested_verify: {item.suggested_verify}")
     console.print(f"  next: {item.next_action}")
