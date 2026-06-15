@@ -1067,6 +1067,113 @@ def test_nullable_graphql_review_thread_response_is_reported_as_unavailable() ->
     assert "resource not accessible" in item.proof.lower()
 
 
+def test_null_review_threads_with_errors_is_reported_as_unavailable() -> None:
+    def runner(command: list[str]) -> tuple[int, str, str]:
+        if command[:3] == ["gh", "pr", "list"]:
+            return (
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": 608,
+                            "title": "Polish docs",
+                            "url": "https://github.com/octo-org/octo-repo/pull/608",
+                            "reviewDecision": "APPROVED",
+                            "statusCheckRollup": {
+                                "state": "COMPLETED",
+                                "conclusion": "SUCCESS",
+                            },
+                        }
+                    ]
+                ),
+                "",
+            )
+        if command[:3] == ["gh", "api", "graphql"]:
+            return (
+                0,
+                json.dumps(
+                    {
+                        "data": {
+                            "repository": {
+                                "pullRequest": {
+                                    "reviewThreads": None,
+                                }
+                            }
+                        },
+                        "errors": [
+                            {
+                                "message": "Could not resolve reviewThreads.",
+                            }
+                        ],
+                    }
+                ),
+                "",
+            )
+        return 0, "[]", ""
+
+    items = scan_github_intake("octo-org/octo-repo", runner=runner)
+
+    assert len(items) == 1
+    item = items[0]
+    assert item.classification == "needs_owner"
+    assert "review-thread intake is unavailable" in item.fit.lower()
+    assert "could not resolve reviewthreads" in item.proof.lower()
+
+
+def test_truncated_graphql_review_threads_are_reported_as_unavailable() -> None:
+    def runner(command: list[str]) -> tuple[int, str, str]:
+        if command[:3] == ["gh", "pr", "list"]:
+            return (
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": 609,
+                            "title": "Polish docs",
+                            "url": "https://github.com/octo-org/octo-repo/pull/609",
+                            "reviewDecision": "APPROVED",
+                            "statusCheckRollup": {
+                                "state": "COMPLETED",
+                                "conclusion": "SUCCESS",
+                            },
+                        }
+                    ]
+                ),
+                "",
+            )
+        if command[:3] == ["gh", "api", "graphql"]:
+            return (
+                0,
+                json.dumps(
+                    {
+                        "data": {
+                            "repository": {
+                                "pullRequest": {
+                                    "reviewThreads": {
+                                        "nodes": [],
+                                        "pageInfo": {
+                                            "hasNextPage": True,
+                                            "endCursor": "cursor-1",
+                                        },
+                                    }
+                                }
+                            }
+                        }
+                    }
+                ),
+                "",
+            )
+        return 0, "[]", ""
+
+    items = scan_github_intake("octo-org/octo-repo", runner=runner)
+
+    assert len(items) == 1
+    item = items[0]
+    assert item.classification == "needs_owner"
+    assert "review-thread intake is unavailable" in item.fit.lower()
+    assert "truncated" in item.proof.lower()
+
+
 def test_review_thread_unavailable_does_not_mask_failing_checks() -> None:
     def runner(command: list[str]) -> tuple[int, str, str]:
         if command[:3] == ["gh", "pr", "list"]:

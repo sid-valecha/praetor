@@ -15,6 +15,10 @@ query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
       reviewThreads(first: 100) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
         nodes {
           isResolved
           isOutdated
@@ -555,6 +559,8 @@ def _collect_review_thread_signals(data: dict[str, Any]) -> list[str]:
 
     review_threads = pull_request.get("reviewThreads")
     if not isinstance(review_threads, dict):
+        if data.get("errors"):
+            return _graphql_unavailable_signal(data)
         return []
 
     signals: list[str] = []
@@ -581,6 +587,9 @@ def _collect_review_thread_signals(data: dict[str, Any]) -> list[str]:
             signals.append(f"Unresolved {thread_kind}: {body}")
         else:
             signals.append(f"Unresolved {thread_kind}.")
+    page_info = review_threads.get("pageInfo")
+    if isinstance(page_info, dict) and page_info.get("hasNextPage") is True:
+        signals.append("Review threads unavailable: review thread results were truncated.")
     return signals
 
 
