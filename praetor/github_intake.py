@@ -99,7 +99,7 @@ def scan_github_intake(
         "--limit",
         "100",
         "--json",
-        "number,title,body,labels,url,state,mergedAt,reviewDecision,latestReviews,reviews,comments,statusCheckRollup,commits",
+        "number,title,body,labels,url,state,mergedAt,reviewDecision,latestReviews,comments,statusCheckRollup",
     ]
     if repo is not None:
         issue_command[3:3] = ["--repo", repo]
@@ -514,10 +514,10 @@ def _fetch_review_thread_signals(
     repo: str | None,
     number: object,
 ) -> list[str]:
-    if repo is None or number is None:
+    if number is None:
         return []
-    if "/" not in repo:
-        return []
+    if repo is None or "/" not in repo:
+        return ["Review threads unavailable: repository slug could not be resolved."]
 
     owner, name = repo.split("/", 1)
     try:

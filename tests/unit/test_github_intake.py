@@ -241,9 +241,13 @@ def test_pr_list_query_uses_supported_gh_json_fields() -> None:
 
     pr_command = next(command for command in commands if command[:3] == ["gh", "pr", "list"])
     json_fields = pr_command[pr_command.index("--json") + 1]
-    assert "statusCheckRollup" in json_fields
-    assert "commits" in json_fields
-    assert "checks" not in json_fields
+    field_names = set(json_fields.split(","))
+    assert "statusCheckRollup" in field_names
+    assert "latestReviews" in field_names
+    assert "comments" in field_names
+    assert "commits" not in field_names
+    assert "reviews" not in field_names
+    assert "checks" not in field_names
     assert "--limit" in pr_command
     assert pr_command[pr_command.index("--limit") + 1] == "100"
 
@@ -952,6 +956,40 @@ def test_open_pr_with_unresolved_graphql_review_thread_is_needs_owner() -> None:
     assert "unresolved review thread" in item.proof.lower()
     assert "README.md:42" in item.proof
     assert "clarify retry behavior" in item.proof
+
+
+def test_missing_repo_slug_reports_review_threads_unavailable() -> None:
+    def runner(command: list[str]) -> tuple[int, str, str]:
+        if command[:3] == ["gh", "pr", "list"]:
+            return (
+                0,
+                json.dumps(
+                    [
+                        {
+                            "number": 606,
+                            "title": "Polish docs",
+                            "url": "https://github.com/octo-org/octo-repo/pull/606",
+                            "reviewDecision": "APPROVED",
+                            "statusCheckRollup": {
+                                "state": "COMPLETED",
+                                "conclusion": "SUCCESS",
+                            },
+                        }
+                    ]
+                ),
+                "",
+            )
+        if command[:3] == ["gh", "repo", "view"]:
+            return 1, "", "not a git repository"
+        return 0, "[]", ""
+
+    items = scan_github_intake(runner=runner)
+
+    assert len(items) == 1
+    item = items[0]
+    assert item.classification == "needs_owner"
+    assert "review-thread intake is unavailable" in item.fit.lower()
+    assert "repository slug could not be resolved" in item.proof.lower()
 
 
 def test_unresolved_outdated_graphql_review_thread_is_reported() -> None:
