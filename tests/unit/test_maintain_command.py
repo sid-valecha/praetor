@@ -5,6 +5,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from praetor.cli import app
+from praetor.maintain import MaintainItem
 from praetor.frontmatter import dump_task
 from praetor.models import Task, TaskStatus
 from praetor.state import init_workspace
@@ -236,6 +237,350 @@ def test_maintain_once_is_read_only(tmp_path: Path, monkeypatch) -> None:
     assert result.exit_code == 0
     after = _snapshot_tree(praetor_dir)
     assert before == after
+
+
+def test_maintain_once_with_propose_tasks_outputs_task_shape_text(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    proposal = MaintainItem(
+        source="github:pull_request:octo-org/octo-repo#202",
+        url="https://github.com/octo-org/octo-repo/pull/202",
+        classification="needs_owner",
+        fit="Open PR has unresolved review feedback.",
+        risk="Review requested changes.",
+        proof="Pull request #202: Improve docs\nUnresolved review thread: src/app.py:42 - Please clarify.",
+        blocker="Open review feedback must be resolved.",
+        next_action="Owner: resolve review feedback.",
+    )
+
+    def fake_scan(
+        repo_root: Path,
+        *,
+        include_github: bool = False,
+        github_pr: int | None = None,
+        github_issue: int | None = None,
+    ):
+        del repo_root, github_pr, github_issue
+        assert include_github
+        from praetor.maintain import MaintainScan
+
+        return MaintainScan(repo_root=str(tmp_path), items=[proposal])
+
+    monkeypatch.setattr("praetor.commands.maintain.scan", fake_scan)
+
+    result = runner.invoke(app, ["maintain", "--once", "--github", "--propose-tasks"])
+
+    assert result.exit_code == 0
+    assert "title:" in result.output.lower()
+    assert "description:" in result.output.lower()
+    assert "src/app.py" in result.output
+
+
+def test_maintain_once_with_propose_tasks_json_outputs_extended_fields(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    proposal = MaintainItem(
+        source="github:issue:octo-org/octo-repo#101",
+        url="https://github.com/octo-org/octo-repo/issues/101",
+        classification="needs_owner",
+        fit="Open issue requires owner triage.",
+        risk="Needs owner triage.",
+        proof="Issue #101: Add endpoint docs",
+        blocker="Needs owner triage.",
+        next_action="Owner: triage issue.",
+    )
+
+    def fake_scan(
+        repo_root: Path,
+        *,
+        include_github: bool = False,
+        github_pr: int | None = None,
+        github_issue: int | None = None,
+    ):
+        del repo_root, github_pr, github_issue
+        assert include_github
+        from praetor.maintain import MaintainScan
+
+        return MaintainScan(repo_root=str(tmp_path), items=[proposal])
+
+    monkeypatch.setattr("praetor.commands.maintain.scan", fake_scan)
+
+    result = runner.invoke(
+        app,
+        ["maintain", "--once", "--github", "--propose-tasks", "--json"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["items"]
+    item = payload["items"][0]
+    for required in ["title", "description", "context_files", "suggested_verify"]:
+        assert required in item
+    assert item["title"] == "Address issue #101: Add endpoint docs"
+    assert item["description"].startswith(
+        "Source: https://github.com/octo-org/octo-repo/issues/101"
+    )
+
+
+def test_maintain_once_with_propose_tasks_json_includes_extensionless_context_files(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    proposal = MaintainItem(
+        source="github:pull_request:octo-org/octo-repo#202",
+        url="https://github.com/octo-org/octo-repo/pull/202",
+        classification="needs_owner",
+        fit="Open PR has unresolved review feedback.",
+        risk="Review requested changes.",
+        proof=(
+            "Pull request #202: Improve build docs\n"
+            "Unresolved review thread: Dockerfile:12 - Pin package versions."
+        ),
+        blocker="Open review feedback must be resolved.",
+        next_action="Owner: resolve review feedback.",
+    )
+
+    def fake_scan(
+        repo_root: Path,
+        *,
+        include_github: bool = False,
+        github_pr: int | None = None,
+        github_issue: int | None = None,
+    ):
+        del repo_root, github_pr, github_issue
+        assert include_github
+        from praetor.maintain import MaintainScan
+
+        return MaintainScan(repo_root=str(tmp_path), items=[proposal])
+
+    monkeypatch.setattr("praetor.commands.maintain.scan", fake_scan)
+
+    result = runner.invoke(
+        app,
+        ["maintain", "--once", "--github", "--propose-tasks", "--json"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    [item] = payload["items"]
+    assert item["context_files"] == ["Dockerfile"]
+
+
+def test_maintain_once_with_propose_tasks_respects_github_pr_filter(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    calls: list[tuple[bool, int | None, int | None]] = []
+
+    def fake_scan(
+        repo_root: Path,
+        *,
+        include_github: bool = False,
+        github_pr: int | None = None,
+        github_issue: int | None = None,
+    ):
+        calls.append((include_github, github_pr, github_issue))
+        from praetor.maintain import MaintainScan
+
+        return MaintainScan(repo_root=str(repo_root), items=[])
+
+    monkeypatch.setattr("praetor.commands.maintain.scan", fake_scan)
+
+    result = runner.invoke(
+        app,
+        ["maintain", "--once", "--github-pr", "88", "--propose-tasks", "--json"],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [(True, 88, None)]
+
+
+def test_maintain_once_with_propose_tasks_respects_github_issue_filter(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    calls: list[tuple[bool, int | None, int | None]] = []
+
+    def fake_scan(
+        repo_root: Path,
+        *,
+        include_github: bool = False,
+        github_pr: int | None = None,
+        github_issue: int | None = None,
+    ):
+        calls.append((include_github, github_pr, github_issue))
+        from praetor.maintain import MaintainScan
+
+        return MaintainScan(repo_root=str(repo_root), items=[])
+
+    monkeypatch.setattr("praetor.commands.maintain.scan", fake_scan)
+
+    result = runner.invoke(
+        app,
+        ["maintain", "--once", "--github-issue", "44", "--propose-tasks", "--json"],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [(True, None, 44)]
+
+
+def test_maintain_once_propose_tasks_is_read_only(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    _write_task(tmp_path, _make_task("ready-a", TaskStatus.pending, verify="pytest"))
+
+    praetor_dir = tmp_path / ".praetor"
+    before = _snapshot_tree(praetor_dir)
+
+    result = runner.invoke(app, ["maintain", "--once", "--propose-tasks"])
+
+    assert result.exit_code == 0
+    after = _snapshot_tree(praetor_dir)
+    assert before == after
+
+
+def test_maintain_once_with_propose_tasks_and_local_only_tasks_is_empty(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    _write_task(tmp_path, _make_task("ready-a", TaskStatus.pending, verify=None))
+
+    result = runner.invoke(app, ["maintain", "--once", "--propose-tasks"])
+
+    assert result.exit_code == 0
+    assert "title:" not in result.output.lower()
+    assert "No maintainer proposals found." in result.output
+
+
+def test_maintain_once_with_propose_tasks_skips_github_intake_diagnostic(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    intake_item = MaintainItem(
+        source="github:intake",
+        classification="needs_owner",
+        fit="Intake unavailable.",
+        risk="GitHub intake could not be loaded.",
+        proof="GitHub intake unavailable.",
+        blocker="GitHub provider did not return actionable findings.",
+        next_action="Fix GitHub intake configuration.",
+    )
+    issue_item = MaintainItem(
+        source="github:issue:octo-org/octo-repo#101",
+        url="https://github.com/octo-org/octo-repo/issues/101",
+        classification="needs_owner",
+        fit="Open issue requires owner triage.",
+        risk="Needs owner triage.",
+        proof="Issue #101: Add endpoint docs",
+        blocker="Needs owner triage.",
+        next_action="Owner: triage issue.",
+    )
+
+    def fake_scan(
+        repo_root: Path,
+        *,
+        include_github: bool = False,
+        github_pr: int | None = None,
+        github_issue: int | None = None,
+    ):
+        del repo_root, github_pr, github_issue
+        assert include_github
+        from praetor.maintain import MaintainScan
+
+        return MaintainScan(repo_root=str(tmp_path), items=[intake_item, issue_item])
+
+    monkeypatch.setattr("praetor.commands.maintain.scan", fake_scan)
+
+    result = runner.invoke(
+        app,
+        ["maintain", "--once", "--github", "--propose-tasks", "--json"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert [item["source"] for item in payload["items"]] == [issue_item.source]
+
+
+def test_maintain_once_with_propose_tasks_skips_pr_review_thread_diagnostic(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    diagnostic_item = MaintainItem(
+        source="github:pull_request:octo-org/octo-repo#202",
+        url="https://github.com/octo-org/octo-repo/pull/202",
+        classification="needs_owner",
+        fit="Open PR review-thread intake is unavailable.",
+        risk="Review-thread feedback cannot be inspected.",
+        proof=(
+            "Pull request #202: Improve docs\n"
+            "Review threads unavailable: Resource not accessible by integration"
+        ),
+        blocker="Review-thread intake is unavailable.",
+        next_action="Owner: fix GitHub auth/API access and rerun the intake.",
+    )
+    review_item = MaintainItem(
+        source="github:pull_request:octo-org/octo-repo#202",
+        url="https://github.com/octo-org/octo-repo/pull/202",
+        classification="needs_owner",
+        fit="Open PR has unresolved review feedback.",
+        risk="Review requested changes.",
+        proof=(
+            "Pull request #202: Improve docs\n"
+            "Unresolved review thread: src/app.py:42 - Please clarify."
+        ),
+        blocker="Open review feedback must be resolved.",
+        next_action="Owner: resolve review feedback.",
+    )
+
+    def fake_scan(
+        repo_root: Path,
+        *,
+        include_github: bool = False,
+        github_pr: int | None = None,
+        github_issue: int | None = None,
+    ):
+        del repo_root, github_pr, github_issue
+        assert include_github
+        from praetor.maintain import MaintainScan
+
+        return MaintainScan(repo_root=str(tmp_path), items=[diagnostic_item, review_item])
+
+    monkeypatch.setattr("praetor.commands.maintain.scan", fake_scan)
+
+    result = runner.invoke(
+        app,
+        ["maintain", "--once", "--github", "--propose-tasks", "--json"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert [item["proof"] for item in payload["items"]] == [review_item.proof]
 
 
 def _snapshot_tree(root: Path) -> dict[str, str]:
