@@ -425,6 +425,58 @@ def test_maintain_once_with_propose_tasks_and_local_only_tasks_is_empty(
     assert "No maintainer proposals found." in result.output
 
 
+def test_maintain_once_with_propose_tasks_skips_github_intake_diagnostic(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    intake_item = MaintainItem(
+        source="github:intake",
+        classification="needs_owner",
+        fit="Intake unavailable.",
+        risk="GitHub intake could not be loaded.",
+        proof="GitHub intake unavailable.",
+        blocker="GitHub provider did not return actionable findings.",
+        next_action="Fix GitHub intake configuration.",
+    )
+    issue_item = MaintainItem(
+        source="github:issue:octo-org/octo-repo#101",
+        url="https://github.com/octo-org/octo-repo/issues/101",
+        classification="needs_owner",
+        fit="Open issue requires owner triage.",
+        risk="Needs owner triage.",
+        proof="Issue #101: Add endpoint docs",
+        blocker="Needs owner triage.",
+        next_action="Owner: triage issue.",
+    )
+
+    def fake_scan(
+        repo_root: Path,
+        *,
+        include_github: bool = False,
+        github_pr: int | None = None,
+        github_issue: int | None = None,
+    ):
+        del repo_root, github_pr, github_issue
+        assert include_github
+        from praetor.maintain import MaintainScan
+
+        return MaintainScan(repo_root=str(tmp_path), items=[intake_item, issue_item])
+
+    monkeypatch.setattr("praetor.commands.maintain.scan", fake_scan)
+
+    result = runner.invoke(
+        app,
+        ["maintain", "--once", "--github", "--propose-tasks", "--json"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert [item["source"] for item in payload["items"]] == [issue_item.source]
+
+
 def _snapshot_tree(root: Path) -> dict[str, str]:
     snapshot: dict[str, str] = {}
     for path in sorted(root.rglob("*")):

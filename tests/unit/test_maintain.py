@@ -390,6 +390,42 @@ def test_proposals_from_scan_preserves_item_order_for_multiple_github_items(
     assert proposals[1].title == "Address pull request feedback for #202: Improve docs"
 
 
+def test_proposals_from_scan_skips_github_intake_diagnostics(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    intake_diagnostic = MaintainItem(
+        source="github:intake",
+        classification="needs_owner",
+        fit="Intake unavailable.",
+        risk="GitHub intake could not be loaded.",
+        proof="GitHub intake unavailable.",
+        blocker="GitHub provider did not return actionable findings.",
+        next_action="Fix GitHub intake configuration.",
+    )
+    issue = MaintainItem(
+        source="github:issue:octo-org/octo-repo#101",
+        url="https://github.com/octo-org/octo-repo/issues/101",
+        classification="needs_owner",
+        fit="Open issue requires owner triage.",
+        risk="No owner review has yet been applied to this request.",
+        proof="Issue #101: Add endpoint docs",
+        blocker="Needs owner triage.",
+        next_action="Owner: triage issue.",
+    )
+
+    result = scan(
+        tmp_path,
+        include_github=True,
+        github_provider=lambda *_args, **_kwargs: [intake_diagnostic, issue],
+    )
+
+    proposals = proposals_from_scan(result)
+
+    assert len(proposals) == 1
+    assert proposals[0].source == issue.source
+
+
 def test_proposals_from_scan_extracts_review_context_file_for_pr_feedback(
     tmp_path: Path,
 ) -> None:

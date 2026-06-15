@@ -95,7 +95,7 @@ def as_repair_proposal(item: MaintainItem) -> MaintainItem | None:
     """Convert a maintain item into a deterministic task-shaped proposal."""
     if item.classification != "needs_owner":
         return None
-    if not item.source.startswith("github:"):
+    if not _is_actionable_github_source(item.source):
         return None
 
     context_files = _extract_context_files(item.proof)
@@ -127,6 +127,10 @@ def _proposal_title(item: MaintainItem) -> str:
         return f"Address GitHub item: {item.source}"
 
     return item.source
+
+
+def _is_actionable_github_source(source: str) -> bool:
+    return source.startswith("github:issue:") or source.startswith("github:pull_request:")
 
 
 def _proposal_description(item: MaintainItem) -> str:
