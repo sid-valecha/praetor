@@ -298,6 +298,37 @@ def test_waiting_when_review_decision_is_missing_but_checks_pass() -> None:
     assert result.waiting_review_items == ["Review decision is unavailable."]
 
 
+def test_clean_when_review_decision_missing_but_pr_is_mergeable_with_passing_checks() -> None:
+    payload = _payload(
+        {
+            "mergeStateStatus": "CLEAN",
+            "mergeable": "MERGEABLE",
+            "isDraft": False,
+        }
+    )
+    payload.pop("reviewDecision")
+
+    result = classify_pr_loop_state(payload)
+
+    assert result.state == "clean"
+    assert result.waiting_review_items == []
+
+
+def test_needs_repair_when_merge_conflicts_exist_even_with_passing_checks() -> None:
+    result = classify_pr_loop_state(
+        _payload(
+            {
+                "mergeStateStatus": "DIRTY",
+                "mergeable": "CONFLICTING",
+                "isDraft": False,
+            }
+        )
+    )
+
+    assert result.state == "needs_repair"
+    assert result.actionable_review_items == ["PR has merge conflicts."]
+
+
 def test_needs_repair_from_nested_status_rollup_contexts() -> None:
     result = classify_pr_loop_state(
         _payload(
