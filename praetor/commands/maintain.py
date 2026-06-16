@@ -168,6 +168,7 @@ def maintain_command(
                 repo_root,
                 result.items,
                 task_verify=task_verify,
+                task_review="strict" if run_repairs else "off",
             )
             repair_task_ids = _dedupe_task_ids(written_task_ids + skipped_task_ids)
             if run_repairs:
@@ -176,6 +177,7 @@ def maintain_command(
                     written_task_ids=written_task_ids,
                     skipped_task_ids=skipped_task_ids,
                     task_verify=task_verify,
+                    task_review="strict",
                 )
         if run_repairs and repair_task_ids:
             try:
@@ -243,6 +245,7 @@ def _repair_task_ids_for_drain(
     written_task_ids: list[str],
     skipped_task_ids: list[str],
     task_verify: str | None,
+    task_review: str,
 ) -> list[str]:
     if task_verify is None:
         return _dedupe_task_ids(written_task_ids + skipped_task_ids)
@@ -251,7 +254,9 @@ def _repair_task_ids_for_drain(
     skipped_with_requested_verify = [
         task_id
         for task_id in skipped_task_ids
-        if tasks_by_id.get(task_id) is not None and tasks_by_id[task_id].verify == task_verify
+        if tasks_by_id.get(task_id) is not None
+        and tasks_by_id[task_id].verify == task_verify
+        and tasks_by_id[task_id].review == task_review
     ]
     return _dedupe_task_ids(written_task_ids + skipped_with_requested_verify)
 
