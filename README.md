@@ -86,7 +86,7 @@ Run one-time adapter checks before broad adoption:
 
 ## `praetor maintain --once` intake
 
-`praetor maintain --once` is shipped and read-only.
+`praetor maintain --once` is report-only by default; local task writes require explicit `--propose-tasks --write-tasks`.
 
 - It performs a local one-pass maintainer triage and optional read-only GitHub intake.
 - `--github`, `--github-pr`, and `--github-issue` are opt-in for GitHub input.
