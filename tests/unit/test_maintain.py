@@ -207,6 +207,46 @@ def test_proposals_from_scan_skips_loop_state_repair_when_pr_intake_already_cove
     assert skipped == []
 
 
+def test_proposals_from_scan_merges_loop_state_evidence_into_existing_pr_proposal(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    intake_item = MaintainItem(
+        source="github:pull_request:octo-org/octo-repo#22",
+        url="https://github.com/octo-org/octo-repo/pull/22",
+        classification="needs_owner",
+        fit="Open PR has unresolved review feedback.",
+        risk="Reviewer requested changes.",
+        proof=(
+            "Pull request #22: Repair review\n"
+            "Unresolved review thread: src/app.py:42 - Please clarify behavior."
+        ),
+        blocker="Open review feedback must be resolved.",
+        next_action="Owner: resolve review feedback.",
+    )
+    result = MaintainScan(
+        repo_root=str(tmp_path),
+        items=[intake_item],
+        github_pr_number=22,
+        github_pr_loop_state=PRLoopStateResult(
+            state="needs_repair",
+            failing_checks=["Failing check: test (conclusion=failure)."],
+        ),
+    )
+
+    proposals = proposals_from_scan(result)
+
+    assert len(proposals) == 1
+    [proposal] = proposals
+    assert proposal.source == intake_item.source
+    assert proposal.description is not None
+    assert "Unresolved review thread: src/app.py:42 - Please clarify behavior." in (
+        proposal.description
+    )
+    assert "Failing check: test (conclusion=failure)." in proposal.description
+    assert proposal.context_files == ["src/app.py"]
+
+
 def test_proposals_from_scan_skips_non_repair_pr_loop_state(tmp_path: Path) -> None:
     init_workspace(tmp_path)
     result = MaintainScan(

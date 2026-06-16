@@ -104,21 +104,26 @@ def proposals_from_scan(scan_result: MaintainScan) -> list[MaintainItem]:
         proposal = as_repair_proposal(item)
         if proposal is not None:
             proposals.append(proposal)
-    loop_state_proposal = _pr_loop_state_repair_proposal(scan_result, proposals)
+    loop_state_proposal = _pr_loop_state_repair_proposal(scan_result)
     if loop_state_proposal is not None:
-        proposals.append(loop_state_proposal)
+        existing_pr_proposal_index = _find_pr_proposal_index(
+            proposals,
+            scan_result.github_pr_number,
+        )
+        if existing_pr_proposal_index is None:
+            proposals.append(loop_state_proposal)
+        else:
+            proposals[existing_pr_proposal_index] = _merge_pr_repair_proposals(
+                proposals[existing_pr_proposal_index],
+                loop_state_proposal,
+            )
     return proposals
 
 
-def _pr_loop_state_repair_proposal(
-    scan_result: MaintainScan,
-    existing_proposals: list[MaintainItem],
-) -> MaintainItem | None:
+def _pr_loop_state_repair_proposal(scan_result: MaintainScan) -> MaintainItem | None:
     loop_state = scan_result.github_pr_loop_state
     pr_number = scan_result.github_pr_number
     if pr_number is None or loop_state is None or loop_state.state != "needs_repair":
-        return None
-    if any(_proposal_targets_pr_number(proposal, pr_number) for proposal in existing_proposals):
         return None
 
     proof_lines = [f"Pull request #{pr_number}: PR loop repair"]
@@ -137,10 +142,54 @@ def _pr_loop_state_repair_proposal(
     return as_repair_proposal(item)
 
 
+def _find_pr_proposal_index(
+    proposals: list[MaintainItem],
+    pr_number: int | None,
+) -> int | None:
+    if pr_number is None:
+        return None
+    for index, proposal in enumerate(proposals):
+        if _proposal_targets_pr_number(proposal, pr_number):
+            return index
+    return None
+
+
 def _proposal_targets_pr_number(proposal: MaintainItem, pr_number: int) -> bool:
     if not proposal.source.startswith("github:pull_request:"):
         return False
     return _extract_github_number(proposal.source) == str(pr_number)
+
+
+def _merge_pr_repair_proposals(
+    existing: MaintainItem,
+    loop_state: MaintainItem,
+) -> MaintainItem:
+    proof = _merge_pr_loop_proof(existing.proof, loop_state.proof)
+    context_files = list(existing.context_files)
+    for context_file in loop_state.context_files:
+        if context_file not in context_files:
+            context_files.append(context_file)
+
+    merged = existing.model_copy(
+        update={
+            "proof": proof,
+            "context_files": context_files,
+            "suggested_verify": existing.suggested_verify or loop_state.suggested_verify,
+        }
+    )
+    return merged.model_copy(update={"description": _proposal_description(merged)})
+
+
+def _merge_pr_loop_proof(existing_proof: str, loop_state_proof: str) -> str:
+    lines = existing_proof.splitlines()
+    seen = set(lines)
+    for line in loop_state_proof.splitlines():
+        if re.match(r"^Pull request #\d+:", line):
+            continue
+        if line and line not in seen:
+            lines.append(line)
+            seen.add(line)
+    return "\n".join(lines)
 
 
 def write_proposals_to_tasks(
