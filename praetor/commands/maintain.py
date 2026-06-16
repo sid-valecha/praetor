@@ -119,6 +119,7 @@ def _print_text(
             console.print("No maintainer proposals found.")
         else:
             console.print("No maintainer items found.")
+        _print_pr_loop_state(result)
         if write_task_ids is not None:
             if write_task_ids:
                 console.print(f"Written {len(write_task_ids)} maintainer task(s):")
@@ -143,6 +144,8 @@ def _print_text(
         for item in items:
             _print_item(item)
         console.print("")
+
+    _print_pr_loop_state(result)
 
     if result.latest_run is not None:
         console.print(f"Latest run: {result.latest_run.id} ({result.latest_run.status})")
@@ -177,3 +180,21 @@ def _print_item(item: MaintainItem) -> None:
     if item.suggested_verify:
         console.print(f"  suggested_verify: {item.suggested_verify}")
     console.print(f"  next: {item.next_action}")
+
+
+def _print_pr_loop_state(result: MaintainScan) -> None:
+    loop_state = result.github_pr_loop_state
+    if loop_state is None:
+        return
+
+    console.print(f"PR loop state: {loop_state.state}")
+    for reason in loop_state.blocked_reasons:
+        console.print(f"  blocked: {reason}")
+    for item in loop_state.actionable_review_items:
+        console.print(f"  actionable_review: {item}")
+    for item in loop_state.failing_checks:
+        console.print(f"  failing_check: {item}")
+    for item in loop_state.waiting_review_items:
+        console.print(f"  waiting_review: {item}")
+    for item in loop_state.pending_checks:
+        console.print(f"  pending_check: {item}")

@@ -16,6 +16,7 @@ from praetor.maintain import (
     scan,
 )
 from praetor.models import Task, TaskStatus
+from praetor.pr_loop_state import PRLoopStateResult
 from praetor.task_creation import create_task
 from praetor.state import init_workspace, list_tasks
 
@@ -76,6 +77,39 @@ def test_scan_includes_github_intake_when_enabled(tmp_path: Path) -> None:
     assert item.source == "github:pr:22"
     assert item.classification == "needs_owner"
     assert "CHANGES_REQUESTED" in item.proof
+
+
+def test_scan_includes_pr_loop_state_for_focused_github_pr(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+
+    def github_provider(
+        repo_root: Path,
+        *,
+        github_pr: int | None = None,
+        github_issue: int | None = None,
+    ) -> list[MaintainItem]:
+        del repo_root, github_issue
+        assert github_pr == 22
+        return []
+
+    def pr_loop_state_provider(repo_root: Path, github_pr: int) -> PRLoopStateResult:
+        del repo_root
+        assert github_pr == 22
+        return PRLoopStateResult(
+            state="needs_repair",
+            failing_checks=["Failing check: ci (conclusion=failure)."],
+        )
+
+    result = scan(
+        tmp_path,
+        github_pr=22,
+        github_provider=github_provider,
+        pr_loop_state_provider=pr_loop_state_provider,
+    )
+
+    assert result.github_pr_loop_state is not None
+    assert result.github_pr_loop_state.state == "needs_repair"
+    assert result.github_pr_loop_state.failing_checks == ["Failing check: ci (conclusion=failure)."]
 
 
 def test_default_github_provider_fallback_uses_github_intake_source(

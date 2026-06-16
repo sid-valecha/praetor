@@ -7,6 +7,8 @@ from typing import Any, Callable, Literal
 
 from pydantic import BaseModel
 
+from praetor.pr_loop_state import PRLoopStateResult, classify_pr_loop_state
+
 GHClassification = Literal["autonomous", "needs_owner", "defer"]
 GhRunner = Callable[[list[str]], tuple[int, str, str]]
 
@@ -191,6 +193,47 @@ def scan_focused_github(
         pr_number=pr_number,
         runner=runner,
     )
+
+
+def scan_focused_pr_loop_state(
+    repo_root: Path,
+    *,
+    pr_number: int,
+) -> PRLoopStateResult:
+    def runner(command: list[str]) -> tuple[int, str, str]:
+        return _run_gh_json(command, cwd=repo_root)
+
+    return classify_focused_pr_loop_state(pr_number=pr_number, runner=runner)
+
+
+def classify_focused_pr_loop_state(
+    *,
+    pr_number: int,
+    repo: str | None = None,
+    runner: GhRunner | None = None,
+) -> PRLoopStateResult:
+    run = runner or _run_gh_json
+    try:
+        raw = _run_object_query(
+            run,
+            _build_pr_view_command(repo, pr_number),
+            f"pull request #{pr_number}",
+        )
+    except _ScanError as exc:
+        return PRLoopStateResult(
+            state="blocked",
+            blocked_reasons=[str(exc)],
+        )
+
+    repo_slug = repo or _resolve_repo_slug(run)
+    review_threads = _fetch_review_threads_payload(run, repo_slug, pr_number)
+    if review_threads is not None:
+        if "reviewThreadsUnavailableReason" in review_threads:
+            raw["reviewThreadsUnavailableReason"] = review_threads["reviewThreadsUnavailableReason"]
+        else:
+            raw["reviewThreads"] = review_threads
+
+    return classify_pr_loop_state(raw)
 
 
 def _build_issue_view_command(repo: str | None, issue_number: int) -> list[str]:
@@ -542,6 +585,57 @@ def _fetch_review_thread_signals(
         return [f"Review threads unavailable: {exc}"]
 
     return _collect_review_thread_signals(data)
+
+
+def _fetch_review_threads_payload(
+    runner: GhRunner,
+    repo: str | None,
+    number: object,
+) -> dict[str, Any] | None:
+    if number is None:
+        return None
+    if repo is None or "/" not in repo:
+        return {"reviewThreadsUnavailableReason": "repository slug could not be resolved."}
+
+    owner, name = repo.split("/", 1)
+    try:
+        data = _run_object_query(
+            runner,
+            [
+                "gh",
+                "api",
+                "graphql",
+                "-f",
+                f"query={_REVIEW_THREADS_QUERY}",
+                "-F",
+                f"owner={owner}",
+                "-F",
+                f"name={name}",
+                "-F",
+                f"number={number}",
+            ],
+            f"review threads for PR #{number}",
+        )
+    except _ScanError as exc:
+        return {"reviewThreadsUnavailableReason": str(exc)}
+
+    payload = data.get("data")
+    if not isinstance(payload, dict):
+        return {"reviewThreadsUnavailableReason": _graphql_unavailable_signal(data)[0]}
+
+    repository = payload.get("repository")
+    if not isinstance(repository, dict):
+        return {"reviewThreadsUnavailableReason": _graphql_unavailable_signal(data)[0]}
+
+    pull_request = repository.get("pullRequest")
+    if not isinstance(pull_request, dict):
+        return {"reviewThreadsUnavailableReason": _graphql_unavailable_signal(data)[0]}
+
+    review_threads = pull_request.get("reviewThreads")
+    if isinstance(review_threads, dict):
+        return review_threads
+
+    return {"reviewThreadsUnavailableReason": _graphql_unavailable_signal(data)[0]}
 
 
 def _collect_review_thread_signals(data: dict[str, Any]) -> list[str]:

@@ -8,6 +8,7 @@ from praetor.cli import app
 from praetor.maintain import MaintainItem
 from praetor.frontmatter import dump_task
 from praetor.models import Task, TaskStatus
+from praetor.pr_loop_state import PRLoopStateResult
 from praetor.state import init_workspace
 
 runner = CliRunner()
@@ -178,6 +179,83 @@ def test_maintain_once_github_pr_requests_focused_pr_intake(
 
     assert result.exit_code == 0
     assert calls == [(True, 22, None)]
+
+
+def test_maintain_once_github_pr_json_includes_loop_state(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    def fake_scan(
+        repo_root: Path,
+        *,
+        include_github: bool = False,
+        github_pr: int | None = None,
+        github_issue: int | None = None,
+    ):
+        assert include_github is True
+        assert github_pr == 22
+        assert github_issue is None
+        from praetor.maintain import MaintainScan
+
+        return MaintainScan(
+            repo_root=str(repo_root),
+            items=[],
+            github_pr_loop_state=PRLoopStateResult(
+                state="needs_repair",
+                failing_checks=["Failing check: ci (conclusion=failure)."],
+            ),
+        )
+
+    monkeypatch.setattr("praetor.commands.maintain.scan", fake_scan)
+
+    result = runner.invoke(app, ["maintain", "--once", "--github-pr", "22", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["github_pr_loop_state"]["state"] == "needs_repair"
+    assert payload["github_pr_loop_state"]["failing_checks"] == [
+        "Failing check: ci (conclusion=failure)."
+    ]
+
+
+def test_maintain_once_github_pr_text_prints_loop_state(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    def fake_scan(
+        repo_root: Path,
+        *,
+        include_github: bool = False,
+        github_pr: int | None = None,
+        github_issue: int | None = None,
+    ):
+        del include_github, github_pr, github_issue
+        from praetor.maintain import MaintainScan
+
+        return MaintainScan(
+            repo_root=str(repo_root),
+            items=[],
+            github_pr_loop_state=PRLoopStateResult(
+                state="waiting",
+                waiting_review_items=["Review is still required."],
+                pending_checks=["Pending check: ci (status=queued)."],
+            ),
+        )
+
+    monkeypatch.setattr("praetor.commands.maintain.scan", fake_scan)
+
+    result = runner.invoke(app, ["maintain", "--once", "--github-pr", "22"])
+
+    assert result.exit_code == 0
+    assert "PR loop state: waiting" in result.output
+    assert "Review is still required." in result.output
+    assert "Pending check: ci" in result.output
 
 
 def test_maintain_once_github_issue_requests_focused_issue_intake(
