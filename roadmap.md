@@ -207,10 +207,10 @@ Ship as plain markdown in `skills/`. Claude Code picks them up when the plugin i
   - `praetor maintain --once` now runs a local scan and optional read-only GitHub issue/PR/CI intake.
   - Findings are classified as `autonomous`, `needs_owner`, or `defer`, with deterministic repair proposals available.
   - `--write-tasks` writes deterministic `maintain-*` task files under `.praetor/tasks`.
-- `praetor.pr_loop_state` exists as a library module for PR loop state classification, but CLI exposure is still next.
+- `praetor.pr_loop_state` is exposed for focused PR review-loop state and surfaced in maintainer CLI output (`--json`) after PR #33.
 - Proposal verify hints are owner-driven, and `suggested_verify` defaulting is handled separately from scanned proposals.
 - No autonomous GitHub mutation, push, review-request, or merge loop is shipped yet; conservative defaults remain `report-only` and manual-review controlled.
-- Next in v1.3.x: expose PR loop state classification on CLI/reports, add maintainer watch mode with lock/heartbeat, and add safer follow-up automation once `--once` reliability is proven.
+- Next in v1.3.x: keep focused PR review-response automation first: deterministic repair-task proposal from review/CI signals, then bounded review-response loop (`max_cycles` + explicit write permissions). Watch mode remains after the bounded loop is stable.
 
 **v1.4 — Memory compounding**
 - Add `.praetor/learnings.md`

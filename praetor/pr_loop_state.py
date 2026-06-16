@@ -37,13 +37,28 @@ def classify_pr_loop_state(raw: Mapping[str, Any] | None) -> PRLoopStateResult:
     failing_checks: list[str] = []
     pending_checks: list[str] = []
 
+    checks_present, check_failing, check_pending = _collect_check_statuses(
+        raw.get("statusCheckRollup")
+    )
+    failing_checks.extend(check_failing)
+    pending_checks.extend(check_pending)
+
     review_decision = _normalize_upper(raw.get("reviewDecision"))
     if review_decision == "CHANGES_REQUESTED":
         actionable_review_items.append("Review decision requested changes.")
     elif review_decision == "REVIEW_REQUIRED":
         waiting_review_items.append("Review is still required.")
-    elif not review_decision:
+    elif not review_decision and not _is_decision_ready_without_review_decision(
+        raw,
+        checks_present=checks_present,
+        failing_checks=failing_checks,
+        pending_checks=pending_checks,
+    ):
         waiting_review_items.append("Review decision is unavailable.")
+
+    pr_readiness = _collect_pr_readiness_items(raw)
+    actionable_review_items.extend(pr_readiness["actionable"])
+    waiting_review_items.extend(pr_readiness["waiting"])
 
     thread_signals = _collect_review_thread_items(raw)
     actionable_review_items.extend(thread_signals["actionable"])
@@ -51,12 +66,6 @@ def classify_pr_loop_state(raw: Mapping[str, Any] | None) -> PRLoopStateResult:
 
     actionable_review_items.extend(_collect_comment_review_signals(raw))
     actionable_review_items.extend(_collect_latest_review_signals(raw))
-
-    checks_present, check_failing, check_pending = _collect_check_statuses(
-        raw.get("statusCheckRollup")
-    )
-    failing_checks.extend(check_failing)
-    pending_checks.extend(check_pending)
 
     if blocked_reasons:
         state: PrLoopState = "blocked"
@@ -75,6 +84,43 @@ def classify_pr_loop_state(raw: Mapping[str, Any] | None) -> PRLoopStateResult:
         pending_checks=pending_checks,
         blocked_reasons=blocked_reasons,
     )
+
+
+def _is_decision_ready_without_review_decision(
+    raw: Mapping[str, Any],
+    *,
+    checks_present: bool,
+    failing_checks: list[str],
+    pending_checks: list[str],
+) -> bool:
+    if not checks_present or failing_checks or pending_checks:
+        return False
+    if _normalize_bool(raw.get("isDraft")) is True:
+        return False
+    return _has_clean_merge_state(raw)
+
+
+def _has_clean_merge_state(raw: Mapping[str, Any]) -> bool:
+    merge_state = _normalize_upper(raw.get("mergeStateStatus"))
+    mergeable = _normalize_upper(raw.get("mergeable"))
+    return merge_state in {"CLEAN", "HAS_HOOKS"} and mergeable == "MERGEABLE"
+
+
+def _collect_pr_readiness_items(raw: Mapping[str, Any]) -> dict[str, list[str]]:
+    actionable: list[str] = []
+    waiting: list[str] = []
+
+    if _normalize_bool(raw.get("isDraft")) is True:
+        waiting.append("PR is still draft.")
+
+    merge_state = _normalize_upper(raw.get("mergeStateStatus"))
+    mergeable = _normalize_upper(raw.get("mergeable"))
+    if merge_state == "DIRTY" or mergeable == "CONFLICTING":
+        actionable.append("PR has merge conflicts.")
+    elif merge_state in {"BLOCKED", "UNKNOWN"} or mergeable == "UNKNOWN":
+        waiting.append("PR mergeability is not clean yet.")
+
+    return {"actionable": actionable, "waiting": waiting}
 
 
 def _is_terminal_pr(raw: Mapping[str, Any]) -> bool:
