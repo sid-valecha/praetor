@@ -11,6 +11,7 @@ from praetor.maintain import (
     MaintainScan,
     _default_github_provider,
     _extract_context_files,
+    respond_to_review_scan,
     write_proposals_to_tasks,
     proposals_from_scan,
     scan,
@@ -261,6 +262,73 @@ def test_proposals_from_scan_skips_non_repair_pr_loop_state(tmp_path: Path) -> N
     proposals = proposals_from_scan(result)
 
     assert proposals == []
+
+
+def test_respond_to_review_scan_returns_proposals_only_for_needs_repair(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    result = MaintainScan(
+        repo_root=str(tmp_path),
+        github_pr_number=22,
+        github_pr_loop_state=PRLoopStateResult(
+            state="needs_repair",
+            actionable_review_items=["Unresolved review thread: src/app.py:42 - Please clarify."],
+        ),
+    )
+
+    response = respond_to_review_scan(result)
+
+    assert len(response.items) == 1
+    assert response.items[0].source == "github:pull_request:current#22"
+    assert response.items[0].context_files == ["src/app.py"]
+
+
+def test_respond_to_review_scan_leaves_waiting_state_report_only(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    result = MaintainScan(
+        repo_root=str(tmp_path),
+        github_pr_number=22,
+        items=[
+            MaintainItem(
+                source="github:pull_request:octo-org/octo-repo#22",
+                classification="needs_owner",
+                fit="Open PR is waiting for review.",
+                risk="Review has not completed.",
+                proof="Pull request #22: Waiting",
+                blocker="Review is still required.",
+                next_action="Wait for review.",
+            )
+        ],
+        github_pr_loop_state=PRLoopStateResult(
+            state="waiting",
+            waiting_review_items=["Review is still required."],
+        ),
+    )
+
+    response = respond_to_review_scan(result)
+
+    assert response.items == []
+    assert response.github_pr_loop_state is not None
+    assert response.github_pr_loop_state.state == "waiting"
+
+
+def test_respond_to_review_scan_blocks_when_loop_state_is_missing(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    result = MaintainScan(repo_root=str(tmp_path), github_pr_number=22)
+
+    response = respond_to_review_scan(result)
+
+    assert response.items == []
+    assert response.github_pr_loop_state is not None
+    assert response.github_pr_loop_state.state == "blocked"
+    assert response.github_pr_loop_state.blocked_reasons == [
+        "Focused PR loop state is unavailable."
+    ]
 
 
 def test_default_github_provider_fallback_uses_github_intake_source(
