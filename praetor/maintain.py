@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from praetor.dag import compute_ready_set
 from praetor.models import MAX_TASK_ID_LENGTH, Task, TaskStatus
+from praetor.pr_loop_state import PRLoopStateResult
 from praetor.recovery import latest_review_failure
 from praetor.run_history import latest_run as load_latest_run
 from praetor.state import list_tasks
@@ -15,6 +16,7 @@ from praetor.task_creation import create_task
 
 Classification = Literal["autonomous", "needs_owner", "defer"]
 GithubProvider = Callable[..., Iterable["MaintainItem"]]
+PrLoopStateProvider = Callable[[Path, int], PRLoopStateResult]
 
 
 class MaintainItem(BaseModel):
@@ -41,6 +43,7 @@ class MaintainScan(BaseModel):
     repo_root: str
     items: list[MaintainItem] = Field(default_factory=list)
     latest_run: LatestRunSummary | None = None
+    github_pr_loop_state: PRLoopStateResult | None = None
 
 
 def scan(
@@ -50,6 +53,7 @@ def scan(
     github_pr: int | None = None,
     github_issue: int | None = None,
     github_provider: GithubProvider | None = None,
+    pr_loop_state_provider: PrLoopStateProvider | None = None,
 ) -> MaintainScan:
     """Read-only scan of local Praetor state for the current repo."""
     tasks = list_tasks(repo_root)
@@ -69,6 +73,13 @@ def scan(
         else:
             items.extend(provider(repo_root, github_pr=github_pr, github_issue=github_issue))
 
+    github_pr_loop_state: PRLoopStateResult | None = None
+    if github_pr is not None and github_issue is None:
+        if pr_loop_state_provider is not None:
+            github_pr_loop_state = pr_loop_state_provider(repo_root, github_pr)
+        elif github_provider is None:
+            github_pr_loop_state = _default_pr_loop_state_provider(repo_root, github_pr)
+
     latest_run_record = load_latest_run(repo_root)
     latest_run = (
         LatestRunSummary(id=latest_run_record.id, status=latest_run_record.status)
@@ -80,6 +91,7 @@ def scan(
         repo_root=str(repo_root),
         items=items,
         latest_run=latest_run,
+        github_pr_loop_state=github_pr_loop_state,
     )
 
 
@@ -430,6 +442,18 @@ def _default_github_provider(
     else:
         raw_items = scan_github(repo_root)
     return [MaintainItem(**item.to_maintain_payload()) for item in raw_items]
+
+
+def _default_pr_loop_state_provider(repo_root: Path, github_pr: int) -> PRLoopStateResult:
+    try:
+        from praetor.github_intake import scan_focused_pr_loop_state
+    except ModuleNotFoundError:
+        return PRLoopStateResult(
+            state="blocked",
+            blocked_reasons=["GitHub PR loop-state provider module is unavailable."],
+        )
+
+    return scan_focused_pr_loop_state(repo_root, pr_number=github_pr)
 
 
 def _classify_task(

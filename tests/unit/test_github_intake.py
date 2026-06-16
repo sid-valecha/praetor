@@ -1,7 +1,7 @@
 import json
 import subprocess
 
-from praetor.github_intake import scan_github_intake
+from praetor.github_intake import classify_focused_pr_loop_state, scan_github_intake
 
 
 EMPTY_REVIEW_THREADS = {
@@ -330,6 +330,110 @@ def test_focused_pr_uses_pr_view_and_review_threads() -> None:
     assert "README.md:7" in items[0].proof
     assert ["gh", "pr", "view"] == commands[0][:3]
     assert not any(command[:3] == ["gh", "pr", "list"] for command in commands)
+
+
+def test_focused_pr_loop_state_classifies_current_review_thread() -> None:
+    def runner(command: list[str]) -> tuple[int, str, str]:
+        if command[:3] == ["gh", "pr", "view"]:
+            return (
+                0,
+                json.dumps(
+                    {
+                        "number": 202,
+                        "title": "Improve docs",
+                        "url": "https://github.com/octo-org/octo-repo/pull/202",
+                        "state": "OPEN",
+                        "reviewDecision": "APPROVED",
+                        "statusCheckRollup": {
+                            "state": "COMPLETED",
+                            "conclusion": "SUCCESS",
+                        },
+                    }
+                ),
+                "",
+            )
+        if command[:3] == ["gh", "api", "graphql"]:
+            return (
+                0,
+                json.dumps(
+                    {
+                        "data": {
+                            "repository": {
+                                "pullRequest": {
+                                    "reviewThreads": {
+                                        "nodes": [
+                                            {
+                                                "isResolved": False,
+                                                "isOutdated": False,
+                                                "comments": {
+                                                    "nodes": [
+                                                        {
+                                                            "body": "Please clarify docs.",
+                                                            "path": "README.md",
+                                                            "line": 7,
+                                                        }
+                                                    ]
+                                                },
+                                            }
+                                        ]
+                                    }
+                                }
+                            }
+                        }
+                    }
+                ),
+                "",
+            )
+        if command[:3] == ["gh", "repo", "view"]:
+            return (
+                0,
+                json.dumps({"owner": {"login": "octo-org"}, "name": "octo-repo"}),
+                "",
+            )
+        return 0, "[]", ""
+
+    result = classify_focused_pr_loop_state(pr_number=202, runner=runner)
+
+    assert result.state == "needs_repair"
+    assert result.actionable_review_items == [
+        "Unresolved review thread: README.md:7 - Please clarify docs."
+    ]
+
+
+def test_focused_pr_loop_state_blocks_when_review_threads_are_unavailable() -> None:
+    def runner(command: list[str]) -> tuple[int, str, str]:
+        if command[:3] == ["gh", "pr", "view"]:
+            return (
+                0,
+                json.dumps(
+                    {
+                        "number": 202,
+                        "title": "Improve docs",
+                        "url": "https://github.com/octo-org/octo-repo/pull/202",
+                        "state": "OPEN",
+                        "reviewDecision": "APPROVED",
+                        "statusCheckRollup": {
+                            "state": "COMPLETED",
+                            "conclusion": "SUCCESS",
+                        },
+                    }
+                ),
+                "",
+            )
+        if command[:3] == ["gh", "api", "graphql"]:
+            return 1, "", "GraphQL: Resource not accessible by integration"
+        if command[:3] == ["gh", "repo", "view"]:
+            return (
+                0,
+                json.dumps({"owner": {"login": "octo-org"}, "name": "octo-repo"}),
+                "",
+            )
+        return 0, "[]", ""
+
+    result = classify_focused_pr_loop_state(pr_number=202, runner=runner)
+
+    assert result.state == "blocked"
+    assert any("Resource not accessible" in reason for reason in result.blocked_reasons)
 
 
 def test_focused_merged_pr_with_unresolved_threads_is_historical_defer() -> None:
