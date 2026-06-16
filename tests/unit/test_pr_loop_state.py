@@ -314,6 +314,22 @@ def test_clean_when_review_decision_missing_but_pr_is_mergeable_with_passing_che
     assert result.waiting_review_items == []
 
 
+def test_clean_when_review_decision_missing_but_pr_has_hooks_and_passing_checks() -> None:
+    payload = _payload(
+        {
+            "mergeStateStatus": "HAS_HOOKS",
+            "mergeable": "MERGEABLE",
+            "isDraft": False,
+        }
+    )
+    payload.pop("reviewDecision")
+
+    result = classify_pr_loop_state(payload)
+
+    assert result.state == "clean"
+    assert result.waiting_review_items == []
+
+
 def test_needs_repair_when_merge_conflicts_exist_even_with_passing_checks() -> None:
     result = classify_pr_loop_state(
         _payload(

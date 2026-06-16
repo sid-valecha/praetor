@@ -103,7 +103,7 @@ def _is_decision_ready_without_review_decision(
 def _has_clean_merge_state(raw: Mapping[str, Any]) -> bool:
     merge_state = _normalize_upper(raw.get("mergeStateStatus"))
     mergeable = _normalize_upper(raw.get("mergeable"))
-    return merge_state == "CLEAN" and mergeable == "MERGEABLE"
+    return merge_state in {"CLEAN", "HAS_HOOKS"} and mergeable == "MERGEABLE"
 
 
 def _collect_pr_readiness_items(raw: Mapping[str, Any]) -> dict[str, list[str]]:
