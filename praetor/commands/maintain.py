@@ -17,6 +17,7 @@ from praetor.maintain import (
     write_proposals_to_tasks,
 )
 from praetor.runner import drain_queue
+from praetor.state import list_tasks
 
 console = Console()
 
@@ -169,6 +170,13 @@ def maintain_command(
                 task_verify=task_verify,
             )
             repair_task_ids = _dedupe_task_ids(written_task_ids + skipped_task_ids)
+            if run_repairs:
+                repair_task_ids = _repair_task_ids_for_drain(
+                    repo_root,
+                    written_task_ids=written_task_ids,
+                    skipped_task_ids=skipped_task_ids,
+                    task_verify=task_verify,
+                )
         if run_repairs and repair_task_ids:
             try:
                 agent_adapter = get_adapter(adapter, model=model, effort=effort)
@@ -227,6 +235,25 @@ def maintain_command(
 
 def _dedupe_task_ids(task_ids: list[str]) -> list[str]:
     return list(dict.fromkeys(task_ids))
+
+
+def _repair_task_ids_for_drain(
+    repo_root: Path,
+    *,
+    written_task_ids: list[str],
+    skipped_task_ids: list[str],
+    task_verify: str | None,
+) -> list[str]:
+    if task_verify is None:
+        return _dedupe_task_ids(written_task_ids + skipped_task_ids)
+
+    tasks_by_id = {task.id: task for task in list_tasks(repo_root)}
+    skipped_with_requested_verify = [
+        task_id
+        for task_id in skipped_task_ids
+        if tasks_by_id.get(task_id) is not None and tasks_by_id[task_id].verify == task_verify
+    ]
+    return _dedupe_task_ids(written_task_ids + skipped_with_requested_verify)
 
 
 def _print_text(
