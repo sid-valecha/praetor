@@ -200,7 +200,11 @@ def _merge_pr_loop_proof(existing_proof: str, loop_state_proof: str) -> str:
 
 
 def _proof_line_evidence_key(line: str) -> str | None:
-    match = re.match(r"^Failing check: (?P<name>.+?) \(", line.strip())
+    match = re.match(
+        r"^Failing check: (?P<name>.+?) "
+        r"\((?:status=[^)]*,\s*)?conclusion=[^)]*\)\.$",
+        line.strip(),
+    )
     if match is not None:
         return f"failing-check:{match.group('name').strip()}"
     return None

@@ -1059,6 +1059,47 @@ def test_write_proposals_to_tasks_skips_same_failing_check_after_loop_state_merg
     assert len(list_tasks(tmp_path)) == 1
 
 
+def test_proposals_from_scan_preserves_matrix_check_names_when_merging_loop_state(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    intake_item = MaintainItem(
+        source="github:pull_request:octo-org/octo-repo#202",
+        url="https://github.com/octo-org/octo-repo/pull/202",
+        classification="needs_owner",
+        fit="Open PR has failing checks.",
+        risk="Failing checks block PR readiness.",
+        proof=(
+            "Pull request #202: Repair CI\n"
+            "Failing check: tests (py310) (status=completed, conclusion=failure)."
+        ),
+        blocker="Failing checks must be repaired.",
+        next_action="Owner: fix failing checks.",
+    )
+    result = MaintainScan(
+        repo_root=str(tmp_path),
+        items=[intake_item],
+        github_pr_number=202,
+        github_pr_loop_state=PRLoopStateResult(
+            state="needs_repair",
+            failing_checks=[
+                "Failing check: tests (py310) (conclusion=failure).",
+                "Failing check: tests (py311) (conclusion=failure).",
+            ],
+        ),
+    )
+
+    proposals = proposals_from_scan(result)
+
+    assert len(proposals) == 1
+    [proposal] = proposals
+    assert "Failing check: tests (py310) (status=completed, conclusion=failure)." in (
+        proposal.proof
+    )
+    assert "Failing check: tests (py310) (conclusion=failure)." not in proposal.proof
+    assert "Failing check: tests (py311) (conclusion=failure)." in proposal.proof
+
+
 def test_write_proposals_to_tasks_distinguishes_multiline_review_feedback(
     tmp_path: Path,
 ) -> None:
