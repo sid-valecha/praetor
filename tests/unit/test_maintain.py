@@ -880,6 +880,55 @@ def test_write_proposals_to_tasks_skips_remaining_feedback_already_in_existing_t
     assert len(list_tasks(tmp_path)) == 1
 
 
+def test_write_proposals_to_tasks_skips_remaining_feedback_in_same_batch(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    combined_feedback = MaintainItem(
+        source="github:pull_request:octo-org/octo-repo#202",
+        url="https://github.com/octo-org/octo-repo/pull/202",
+        classification="needs_owner",
+        fit="Open PR has unresolved review feedback.",
+        risk="Reviewer requested changes.",
+        proof=(
+            "Pull request #202: Improve docs\n"
+            "Unresolved review thread: src/app.py:42 - Please clarify.\n"
+            "Unresolved review thread: tests/test_app.py:7 - Add coverage."
+        ),
+        blocker="Open review feedback must be resolved.",
+        next_action="Owner: resolve review feedback.",
+        title="Address pull request feedback for #202: Improve docs",
+        description=(
+            "Source: https://github.com/octo-org/octo-repo/pull/202\n"
+            "Proof: Pull request #202: Improve docs\n"
+            "Unresolved review thread: src/app.py:42 - Please clarify.\n"
+            "Unresolved review thread: tests/test_app.py:7 - Add coverage."
+        ),
+    )
+    remaining_feedback = combined_feedback.model_copy(
+        update={
+            "proof": (
+                "Pull request #202: Improve docs\n"
+                "Unresolved review thread: tests/test_app.py:7 - Add coverage."
+            ),
+            "description": (
+                "Source: https://github.com/octo-org/octo-repo/pull/202\n"
+                "Proof: Pull request #202: Improve docs\n"
+                "Unresolved review thread: tests/test_app.py:7 - Add coverage."
+            ),
+        }
+    )
+
+    created, skipped = write_proposals_to_tasks(
+        tmp_path,
+        [combined_feedback, remaining_feedback],
+    )
+
+    assert len(created) == 1
+    assert skipped == created
+    assert len(list_tasks(tmp_path)) == 1
+
+
 def test_write_proposals_to_tasks_does_not_skip_same_feedback_for_different_pr(
     tmp_path: Path,
 ) -> None:

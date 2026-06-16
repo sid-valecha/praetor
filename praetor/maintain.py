@@ -118,7 +118,7 @@ def write_proposals_to_tasks(
             skipped_task_ids.append(covered_task_id)
             continue
 
-        create_task(
+        created_task = create_task(
             repo_root=repo_root,
             title=proposal.title or proposal.source,
             depends_on=[],
@@ -129,6 +129,7 @@ def write_proposals_to_tasks(
         )
         created_task_ids.append(task_id)
         existing_task_ids.add(task_id)
+        existing_tasks_by_id[task_id] = created_task
 
     return created_task_ids, skipped_task_ids
 
