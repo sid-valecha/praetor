@@ -104,16 +104,21 @@ def proposals_from_scan(scan_result: MaintainScan) -> list[MaintainItem]:
         proposal = as_repair_proposal(item)
         if proposal is not None:
             proposals.append(proposal)
-    loop_state_proposal = _pr_loop_state_repair_proposal(scan_result)
+    loop_state_proposal = _pr_loop_state_repair_proposal(scan_result, proposals)
     if loop_state_proposal is not None:
         proposals.append(loop_state_proposal)
     return proposals
 
 
-def _pr_loop_state_repair_proposal(scan_result: MaintainScan) -> MaintainItem | None:
+def _pr_loop_state_repair_proposal(
+    scan_result: MaintainScan,
+    existing_proposals: list[MaintainItem],
+) -> MaintainItem | None:
     loop_state = scan_result.github_pr_loop_state
     pr_number = scan_result.github_pr_number
     if pr_number is None or loop_state is None or loop_state.state != "needs_repair":
+        return None
+    if any(_proposal_targets_pr_number(proposal, pr_number) for proposal in existing_proposals):
         return None
 
     proof_lines = [f"Pull request #{pr_number}: PR loop repair"]
@@ -130,6 +135,12 @@ def _pr_loop_state_repair_proposal(scan_result: MaintainScan) -> MaintainItem | 
         next_action="Create a repair task, run verify/review, push, then request review again.",
     )
     return as_repair_proposal(item)
+
+
+def _proposal_targets_pr_number(proposal: MaintainItem, pr_number: int) -> bool:
+    if not proposal.source.startswith("github:pull_request:"):
+        return False
+    return _extract_github_number(proposal.source) == str(pr_number)
 
 
 def write_proposals_to_tasks(

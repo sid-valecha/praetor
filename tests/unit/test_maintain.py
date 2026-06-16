@@ -171,6 +171,42 @@ def test_proposals_from_scan_includes_focused_pr_loop_state_repair(
     assert proposal.suggested_verify is None
 
 
+def test_proposals_from_scan_skips_loop_state_repair_when_pr_intake_already_covers_it(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    intake_item = MaintainItem(
+        source="github:pull_request:octo-org/octo-repo#22",
+        url="https://github.com/octo-org/octo-repo/pull/22",
+        classification="needs_owner",
+        fit="Open PR has failing checks.",
+        risk="Failing checks block PR readiness.",
+        proof=(
+            "Pull request #22: Repair CI\n"
+            "Failing check: test (status=completed, conclusion=failure)."
+        ),
+        blocker="Failing checks must be repaired.",
+        next_action="Owner: fix failing checks.",
+    )
+    result = MaintainScan(
+        repo_root=str(tmp_path),
+        items=[intake_item],
+        github_pr_number=22,
+        github_pr_loop_state=PRLoopStateResult(
+            state="needs_repair",
+            failing_checks=["Failing check: test (conclusion=failure)."],
+        ),
+    )
+
+    proposals = proposals_from_scan(result)
+    created, skipped = write_proposals_to_tasks(tmp_path, proposals)
+
+    assert len(proposals) == 1
+    assert proposals[0].source == intake_item.source
+    assert len(created) == 1
+    assert skipped == []
+
+
 def test_proposals_from_scan_skips_non_repair_pr_loop_state(tmp_path: Path) -> None:
     init_workspace(tmp_path)
     result = MaintainScan(
