@@ -1010,6 +1010,55 @@ def test_write_proposals_to_tasks_skips_duplicate_latest_review_after_pr_body_ch
     assert len(list_tasks(tmp_path)) == 1
 
 
+def test_write_proposals_to_tasks_skips_same_failing_check_after_loop_state_merge(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    source = "github:pull_request:octo-org/octo-repo#202"
+    url = "https://github.com/octo-org/octo-repo/pull/202"
+    intake_proposal = MaintainItem(
+        source=source,
+        url=url,
+        classification="needs_owner",
+        fit="Open PR has failing checks.",
+        risk="Failing checks block PR readiness.",
+        proof=(
+            "Pull request #202: Repair CI\n"
+            "Failing check: ci (status=completed, conclusion=failure)."
+        ),
+        blocker="Failing checks must be repaired.",
+        next_action="Owner: fix failing checks.",
+        title="Address pull request feedback for #202: Repair CI",
+        description=(
+            "Source: https://github.com/octo-org/octo-repo/pull/202\n"
+            "Proof: Pull request #202: Repair CI\n"
+            "Failing check: ci (status=completed, conclusion=failure)."
+        ),
+    )
+    loop_state = PRLoopStateResult(
+        state="needs_repair",
+        failing_checks=["Failing check: ci (conclusion=failure)."],
+    )
+    merged_scan = MaintainScan(
+        repo_root=str(tmp_path),
+        items=[intake_proposal],
+        github_pr_number=202,
+        github_pr_loop_state=loop_state,
+    )
+
+    created_first, skipped_first = write_proposals_to_tasks(tmp_path, [intake_proposal])
+    created_second, skipped_second = write_proposals_to_tasks(
+        tmp_path,
+        proposals_from_scan(merged_scan),
+    )
+
+    assert len(created_first) == 1
+    assert skipped_first == []
+    assert created_second == []
+    assert skipped_second == created_first
+    assert len(list_tasks(tmp_path)) == 1
+
+
 def test_write_proposals_to_tasks_distinguishes_multiline_review_feedback(
     tmp_path: Path,
 ) -> None:

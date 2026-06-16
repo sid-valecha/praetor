@@ -183,13 +183,27 @@ def _merge_pr_repair_proposals(
 def _merge_pr_loop_proof(existing_proof: str, loop_state_proof: str) -> str:
     lines = existing_proof.splitlines()
     seen = set(lines)
+    seen_evidence_keys = {_proof_line_evidence_key(line) for line in lines}
+    seen_evidence_keys.discard(None)
     for line in loop_state_proof.splitlines():
         if re.match(r"^Pull request #\d+:", line):
+            continue
+        evidence_key = _proof_line_evidence_key(line)
+        if evidence_key is not None and evidence_key in seen_evidence_keys:
             continue
         if line and line not in seen:
             lines.append(line)
             seen.add(line)
+            if evidence_key is not None:
+                seen_evidence_keys.add(evidence_key)
     return "\n".join(lines)
+
+
+def _proof_line_evidence_key(line: str) -> str | None:
+    match = re.match(r"^Failing check: (?P<name>.+?) \(", line.strip())
+    if match is not None:
+        return f"failing-check:{match.group('name').strip()}"
+    return None
 
 
 def write_proposals_to_tasks(
