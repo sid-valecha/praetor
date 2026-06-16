@@ -854,6 +854,7 @@ def test_write_proposals_to_tasks_skips_remaining_feedback_already_in_existing_t
         next_action="Owner: resolve review feedback.",
         title="Address pull request feedback for #202: Improve docs",
         description=(
+            "Source: https://github.com/octo-org/octo-repo/pull/202\n"
             "Proof: Pull request #202: Improve docs\n"
             "Unresolved review thread: src/app.py:42 - Please clarify.\n"
             "Unresolved review thread: tests/test_app.py:7 - Add coverage."
@@ -877,6 +878,49 @@ def test_write_proposals_to_tasks_skips_remaining_feedback_already_in_existing_t
     assert created_second == []
     assert skipped_second == created_first
     assert len(list_tasks(tmp_path)) == 1
+
+
+def test_write_proposals_to_tasks_does_not_skip_same_feedback_for_different_pr(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    create_task(
+        repo_root=tmp_path,
+        title="Address pull request feedback for #201: Improve docs",
+        depends_on=[],
+        task_id="existing-pr-201-feedback",
+        body=(
+            "# Address pull request feedback for #201: Improve docs\n\n"
+            "Source: https://github.com/octo-org/octo-repo/pull/201\n"
+            "Proof: Pull request #201: Improve docs\n"
+            "Unresolved review thread: src/app.py:42 - Please clarify."
+        ),
+    )
+    proposal = MaintainItem(
+        source="github:pull_request:octo-org/octo-repo#202",
+        url="https://github.com/octo-org/octo-repo/pull/202",
+        classification="needs_owner",
+        fit="Open PR has unresolved review feedback.",
+        risk="Reviewer requested changes.",
+        proof=(
+            "Pull request #202: Improve docs\n"
+            "Unresolved review thread: src/app.py:42 - Please clarify."
+        ),
+        blocker="Open review feedback must be resolved.",
+        next_action="Owner: resolve review feedback.",
+        title="Address pull request feedback for #202: Improve docs",
+        description=(
+            "Source: https://github.com/octo-org/octo-repo/pull/202\n"
+            "Proof: Pull request #202: Improve docs\n"
+            "Unresolved review thread: src/app.py:42 - Please clarify."
+        ),
+    )
+
+    created, skipped = write_proposals_to_tasks(tmp_path, [proposal])
+
+    assert len(created) == 1
+    assert skipped == []
+    assert len(list_tasks(tmp_path)) == 2
 
 
 def test_write_proposals_to_tasks_writes_title_only_issue_with_existing_task(

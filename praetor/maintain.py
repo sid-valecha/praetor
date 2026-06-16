@@ -190,14 +190,23 @@ def _existing_task_covering_proposal(
 
 def _task_matches_proposal(task: Task, proposal: MaintainItem) -> bool:
     signature = _proposal_feedback_proof(proposal)
+    task_ids = {
+        _proposal_task_id(proposal),
+        _legacy_proposal_task_id(proposal),
+    }
     if not signature:
-        return task.id in {
-            _proposal_task_id(proposal),
-            _legacy_proposal_task_id(proposal),
-        }
+        return task.id in task_ids
 
     body = task.body or ""
+    if task.id not in task_ids and not _task_body_scopes_to_proposal(body, proposal):
+        return False
     return all(line in body for line in signature.splitlines() if line)
+
+
+def _task_body_scopes_to_proposal(body: str, proposal: MaintainItem) -> bool:
+    if proposal.url and proposal.url in body:
+        return True
+    return proposal.source in body
 
 
 def _proposal_feedback_signature(item: MaintainItem) -> str:
