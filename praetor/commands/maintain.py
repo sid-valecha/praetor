@@ -56,6 +56,13 @@ def maintain_command(
             help="Create .praetor task files for deterministic proposals.",
         ),
     ] = False,
+    task_verify: Annotated[
+        str | None,
+        typer.Option(
+            "--task-verify",
+            help="Explicit verify command used when writing proposal tasks.",
+        ),
+    ] = None,
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Emit the scan result as JSON."),
@@ -70,6 +77,8 @@ def maintain_command(
         raise_usage_error("Choose only one focused GitHub target: --github-pr or --github-issue.")
     if write_tasks and not propose_tasks:
         raise_usage_error("--write-tasks requires --propose-tasks.")
+    if task_verify is not None and not write_tasks:
+        raise_usage_error("--task-verify requires --write-tasks.")
 
     include_github = github or github_pr is not None or github_issue is not None
     result = scan(
@@ -87,6 +96,7 @@ def maintain_command(
             written_task_ids, skipped_task_ids = write_proposals_to_tasks(
                 repo_root,
                 result.items,
+                task_verify=task_verify,
             )
 
     if json_output:

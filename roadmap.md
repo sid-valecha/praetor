@@ -203,14 +203,14 @@ Ship as plain markdown in `skills/`. Claude Code picks them up when the plugin i
 - Preserve maker/checker separation in run history so users can audit which agent wrote and which agent reviewed
 
 **v1.3.x — Maintainer loop MVP**
-- Move Praetor from PM-started drains toward an autonomous maintainer loop for the current repository
-- Add `praetor maintain --once` to scan open issues, open PRs, CI, and local queue state, then classify work as autonomous, needs owner, or defer
-- Add an autonomous mode that converts safe work into Praetor tasks and drains them through executor -> verify -> reviewer -> bounded retry
-- Ingest PR review comments and failed CI checks as repair inputs, so actionable feedback becomes new Praetor repair tasks instead of manual follow-up
-- Generate human-readable run reports from `.praetor/runs/*.json` so users can see what happened, why retries happened, what changed, what proof passed, and what still needs a decision
-- Keep durable learning local: `.praetor/runs/*.json` is structured truth, `.praetor/reports/*.md` is readable evidence, and future `.praetor/learnings.md` stores conservative lessons from real failures
-- Add `praetor maintain --watch --interval 300` only after `--once` is reliable; use a lock/heartbeat so only one maintainer loop owns a repo at a time
-- Merge policy stays explicit: manual decision, auto-open/update PR, or auto-merge only after verify, reviewer, CI, and configured external review gates pass
+- Current `main` includes a read-only maintainer slice:
+  - `praetor maintain --once` now runs a local scan and optional read-only GitHub issue/PR/CI intake.
+  - Findings are classified as `autonomous`, `needs_owner`, or `defer`, with deterministic repair proposals available.
+  - `--write-tasks` writes deterministic `maintain-*` task files under `.praetor/tasks`.
+- `praetor.pr_loop_state` exists as a library module for PR loop state classification, but CLI exposure is still next.
+- Proposal verify hints are owner-driven, and `suggested_verify` defaulting is handled separately from scanned proposals.
+- No autonomous GitHub mutation, push, review-request, or merge loop is shipped yet; conservative defaults remain `report-only` and manual-review controlled.
+- Next in v1.3.x: expose PR loop state classification on CLI/reports, add maintainer watch mode with lock/heartbeat, and add safer follow-up automation once `--once` reliability is proven.
 
 **v1.4 — Memory compounding**
 - Add `.praetor/learnings.md`
