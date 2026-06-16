@@ -43,6 +43,7 @@ class MaintainScan(BaseModel):
     repo_root: str
     items: list[MaintainItem] = Field(default_factory=list)
     latest_run: LatestRunSummary | None = None
+    github_pr_number: int | None = None
     github_pr_loop_state: PRLoopStateResult | None = None
 
 
@@ -91,6 +92,7 @@ def scan(
         repo_root=str(repo_root),
         items=items,
         latest_run=latest_run,
+        github_pr_number=github_pr if github_issue is None else None,
         github_pr_loop_state=github_pr_loop_state,
     )
 
@@ -102,7 +104,32 @@ def proposals_from_scan(scan_result: MaintainScan) -> list[MaintainItem]:
         proposal = as_repair_proposal(item)
         if proposal is not None:
             proposals.append(proposal)
+    loop_state_proposal = _pr_loop_state_repair_proposal(scan_result)
+    if loop_state_proposal is not None:
+        proposals.append(loop_state_proposal)
     return proposals
+
+
+def _pr_loop_state_repair_proposal(scan_result: MaintainScan) -> MaintainItem | None:
+    loop_state = scan_result.github_pr_loop_state
+    pr_number = scan_result.github_pr_number
+    if pr_number is None or loop_state is None or loop_state.state != "needs_repair":
+        return None
+
+    proof_lines = [f"Pull request #{pr_number}: PR loop repair"]
+    proof_lines.extend(loop_state.actionable_review_items)
+    proof_lines.extend(loop_state.failing_checks)
+    proof = "\n".join(proof_lines)
+    item = MaintainItem(
+        source=f"github:pull_request:current#{pr_number}",
+        classification="needs_owner",
+        fit="Focused PR loop state has actionable repair inputs.",
+        risk="Review feedback, failing checks, or merge conflicts can block PR readiness.",
+        proof=proof,
+        blocker="Focused PR loop state requires repair before clean terminal state.",
+        next_action="Create a repair task, run verify/review, push, then request review again.",
+    )
+    return as_repair_proposal(item)
 
 
 def write_proposals_to_tasks(

@@ -487,6 +487,53 @@ def test_maintain_once_with_propose_tasks_respects_github_pr_filter(
     assert calls == [(True, 88, None)]
 
 
+def test_maintain_once_with_propose_tasks_includes_pr_loop_state_repair(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    def fake_scan(
+        repo_root: Path,
+        *,
+        include_github: bool = False,
+        github_pr: int | None = None,
+        github_issue: int | None = None,
+    ):
+        assert include_github is True
+        assert github_pr == 88
+        assert github_issue is None
+        from praetor.maintain import MaintainScan
+
+        return MaintainScan(
+            repo_root=str(repo_root),
+            github_pr_number=88,
+            github_pr_loop_state=PRLoopStateResult(
+                state="needs_repair",
+                actionable_review_items=[
+                    "Unresolved review thread: src/app.py:42 - Please clarify."
+                ],
+                failing_checks=["Failing check: test (conclusion=failure)."],
+            ),
+        )
+
+    monkeypatch.setattr("praetor.commands.maintain.scan", fake_scan)
+
+    result = runner.invoke(
+        app,
+        ["maintain", "--once", "--github-pr", "88", "--propose-tasks", "--json"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    [item] = payload["items"]
+    assert item["source"] == "github:pull_request:current#88"
+    assert item["title"] == "Address pull request feedback for #88: PR loop repair"
+    assert item["context_files"] == ["src/app.py"]
+    assert "Failing check: test" in item["description"]
+
+
 def test_maintain_once_with_propose_tasks_respects_github_issue_filter(
     tmp_path: Path,
     monkeypatch,

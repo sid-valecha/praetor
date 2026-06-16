@@ -112,6 +112,81 @@ def test_scan_includes_pr_loop_state_for_focused_github_pr(tmp_path: Path) -> No
     assert result.github_pr_loop_state.failing_checks == ["Failing check: ci (conclusion=failure)."]
 
 
+def test_scan_records_focused_github_pr_number_for_loop_state(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+
+    def github_provider(
+        repo_root: Path,
+        *,
+        github_pr: int | None = None,
+        github_issue: int | None = None,
+    ) -> list[MaintainItem]:
+        del repo_root, github_issue
+        assert github_pr == 22
+        return []
+
+    def pr_loop_state_provider(repo_root: Path, github_pr: int) -> PRLoopStateResult:
+        del repo_root
+        assert github_pr == 22
+        return PRLoopStateResult(state="clean")
+
+    result = scan(
+        tmp_path,
+        github_pr=22,
+        github_provider=github_provider,
+        pr_loop_state_provider=pr_loop_state_provider,
+    )
+
+    assert result.github_pr_number == 22
+
+
+def test_proposals_from_scan_includes_focused_pr_loop_state_repair(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    result = MaintainScan(
+        repo_root=str(tmp_path),
+        github_pr_number=22,
+        github_pr_loop_state=PRLoopStateResult(
+            state="needs_repair",
+            actionable_review_items=[
+                "Unresolved review thread: src/app.py:42 - Please clarify behavior."
+            ],
+            failing_checks=["Failing check: test (conclusion=failure)."],
+        ),
+    )
+
+    proposals = proposals_from_scan(result)
+
+    assert len(proposals) == 1
+    proposal = proposals[0]
+    assert proposal.source == "github:pull_request:current#22"
+    assert proposal.title == "Address pull request feedback for #22: PR loop repair"
+    assert proposal.description is not None
+    assert "Unresolved review thread: src/app.py:42 - Please clarify behavior." in (
+        proposal.description
+    )
+    assert "Failing check: test (conclusion=failure)." in proposal.description
+    assert proposal.context_files == ["src/app.py"]
+    assert proposal.suggested_verify is None
+
+
+def test_proposals_from_scan_skips_non_repair_pr_loop_state(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+    result = MaintainScan(
+        repo_root=str(tmp_path),
+        github_pr_number=22,
+        github_pr_loop_state=PRLoopStateResult(
+            state="waiting",
+            waiting_review_items=["Review is still required."],
+        ),
+    )
+
+    proposals = proposals_from_scan(result)
+
+    assert proposals == []
+
+
 def test_default_github_provider_fallback_uses_github_intake_source(
     tmp_path: Path,
     monkeypatch,
