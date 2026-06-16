@@ -120,6 +120,22 @@ def proposals_from_scan(scan_result: MaintainScan) -> list[MaintainItem]:
     return proposals
 
 
+def respond_to_review_scan(scan_result: MaintainScan) -> MaintainScan:
+    """Return the conservative first-step response for focused PR review loops."""
+    loop_state = scan_result.github_pr_loop_state
+    if loop_state is None:
+        loop_state = PRLoopStateResult(
+            state="blocked",
+            blocked_reasons=["Focused PR loop state is unavailable."],
+        )
+        scan_result = scan_result.model_copy(update={"github_pr_loop_state": loop_state})
+
+    if loop_state.state != "needs_repair":
+        return scan_result.model_copy(update={"items": []})
+
+    return scan_result.model_copy(update={"items": proposals_from_scan(scan_result)})
+
+
 def _pr_loop_state_repair_proposal(scan_result: MaintainScan) -> MaintainItem | None:
     loop_state = scan_result.github_pr_loop_state
     pr_number = scan_result.github_pr_number

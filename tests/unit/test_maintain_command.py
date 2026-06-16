@@ -534,6 +534,215 @@ def test_maintain_once_with_propose_tasks_includes_pr_loop_state_repair(
     assert "Failing check: test" in item["description"]
 
 
+def test_respond_to_review_does_not_require_once_flag_for_clean_pr(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    calls: list[tuple[bool, int | None, int | None]] = []
+
+    def fake_scan(
+        repo_root: Path,
+        *,
+        include_github: bool = False,
+        github_pr: int | None = None,
+        github_issue: int | None = None,
+    ):
+        calls.append((include_github, github_pr, github_issue))
+        from praetor.maintain import MaintainScan
+
+        return MaintainScan(
+            repo_root=str(repo_root),
+            github_pr_number=github_pr,
+            github_pr_loop_state=PRLoopStateResult(state="clean"),
+        )
+
+    monkeypatch.setattr("praetor.commands.maintain.scan", fake_scan)
+
+    result = runner.invoke(
+        app,
+        ["maintain", "--github-pr", "88", "--respond-to-review", "--json"],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [(True, 88, None)]
+    payload = json.loads(result.output)
+    assert payload["github_pr_loop_state"]["state"] == "clean"
+    assert payload["respond_to_review"] is True
+    assert payload["max_cycles"] == 3
+    assert payload["items"] == []
+    assert payload["write_tasks"] is False
+    assert payload["written_task_ids"] == []
+
+
+def test_respond_to_review_requires_focused_github_pr(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["maintain", "--respond-to-review"], color=False)
+
+    assert result.exit_code != 0
+    assert "--respond-to-review requires --github-pr." in unstyle(result.output)
+
+
+def test_respond_to_review_rejects_non_positive_max_cycles(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["maintain", "--github-pr", "88", "--respond-to-review", "--max-cycles", "0"],
+        color=False,
+    )
+
+    assert result.exit_code != 0
+    assert "--max-cycles must be at least 1." in unstyle(result.output)
+
+
+def test_respond_to_review_needs_repair_proposes_without_writing(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    def fake_scan(
+        repo_root: Path,
+        *,
+        include_github: bool = False,
+        github_pr: int | None = None,
+        github_issue: int | None = None,
+    ):
+        assert include_github is True
+        assert github_pr == 88
+        assert github_issue is None
+        from praetor.maintain import MaintainScan
+
+        return MaintainScan(
+            repo_root=str(repo_root),
+            github_pr_number=88,
+            github_pr_loop_state=PRLoopStateResult(
+                state="needs_repair",
+                actionable_review_items=[
+                    "Unresolved review thread: src/app.py:42 - Please clarify."
+                ],
+            ),
+        )
+
+    monkeypatch.setattr("praetor.commands.maintain.scan", fake_scan)
+
+    result = runner.invoke(
+        app,
+        ["maintain", "--github-pr", "88", "--respond-to-review", "--json"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["respond_to_review"] is True
+    assert payload["items"][0]["source"] == "github:pull_request:current#88"
+    assert payload["written_count"] == 0
+    assert list_tasks(tmp_path) == []
+
+
+def test_respond_to_review_needs_repair_writes_only_with_write_tasks(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    def fake_scan(
+        repo_root: Path,
+        *,
+        include_github: bool = False,
+        github_pr: int | None = None,
+        github_issue: int | None = None,
+    ):
+        del include_github, github_issue
+        from praetor.maintain import MaintainScan
+
+        return MaintainScan(
+            repo_root=str(repo_root),
+            github_pr_number=github_pr,
+            github_pr_loop_state=PRLoopStateResult(
+                state="needs_repair",
+                failing_checks=["Failing check: tests (conclusion=failure)."],
+            ),
+        )
+
+    monkeypatch.setattr("praetor.commands.maintain.scan", fake_scan)
+
+    result = runner.invoke(
+        app,
+        [
+            "maintain",
+            "--github-pr",
+            "88",
+            "--respond-to-review",
+            "--write-tasks",
+            "--task-verify",
+            "pytest -q",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["written_count"] == 1
+    assert payload["skipped_count"] == 0
+    tasks = list_tasks(tmp_path)
+    assert len(tasks) == 1
+    assert tasks[0].verify == "pytest -q"
+
+
+def test_respond_to_review_waiting_state_stays_report_only(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    def fake_scan(
+        repo_root: Path,
+        *,
+        include_github: bool = False,
+        github_pr: int | None = None,
+        github_issue: int | None = None,
+    ):
+        del include_github, github_issue
+        from praetor.maintain import MaintainScan
+
+        return MaintainScan(
+            repo_root=str(repo_root),
+            github_pr_number=github_pr,
+            github_pr_loop_state=PRLoopStateResult(
+                state="waiting",
+                waiting_review_items=["Review is still required."],
+            ),
+        )
+
+    monkeypatch.setattr("praetor.commands.maintain.scan", fake_scan)
+
+    result = runner.invoke(
+        app,
+        ["maintain", "--github-pr", "88", "--respond-to-review", "--write-tasks", "--json"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["github_pr_loop_state"]["state"] == "waiting"
+    assert payload["items"] == []
+    assert payload["written_count"] == 0
+    assert list_tasks(tmp_path) == []
+
+
 def test_maintain_once_with_propose_tasks_respects_github_issue_filter(
     tmp_path: Path,
     monkeypatch,

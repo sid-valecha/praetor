@@ -9,9 +9,10 @@ from praetor.commands import raise_usage_error, require_workspace
 from praetor.maintain import (
     MaintainItem,
     MaintainScan,
-    write_proposals_to_tasks,
     proposals_from_scan,
+    respond_to_review_scan,
     scan,
+    write_proposals_to_tasks,
 )
 
 console = Console()
@@ -49,6 +50,20 @@ def maintain_command(
             help="Convert applicable GitHub findings into task-shaped proposals.",
         ),
     ] = False,
+    respond_to_review: Annotated[
+        bool,
+        typer.Option(
+            "--respond-to-review",
+            help="Run one bounded focused PR review-response planning cycle.",
+        ),
+    ] = False,
+    max_cycles: Annotated[
+        int,
+        typer.Option(
+            "--max-cycles",
+            help="Maximum review-response cycles for future authorized drains.",
+        ),
+    ] = 3,
     write_tasks: Annotated[
         bool,
         typer.Option(
@@ -71,12 +86,16 @@ def maintain_command(
     repo_root = Path.cwd()
     require_workspace(repo_root)
 
-    if not once:
+    if not once and not respond_to_review:
         raise_usage_error("praetor maintain currently requires --once.")
     if github_pr is not None and github_issue is not None:
         raise_usage_error("Choose only one focused GitHub target: --github-pr or --github-issue.")
-    if write_tasks and not propose_tasks:
-        raise_usage_error("--write-tasks requires --propose-tasks.")
+    if respond_to_review and github_pr is None:
+        raise_usage_error("--respond-to-review requires --github-pr.")
+    if max_cycles < 1:
+        raise_usage_error("--max-cycles must be at least 1.")
+    if write_tasks and not (propose_tasks or respond_to_review):
+        raise_usage_error("--write-tasks requires --propose-tasks or --respond-to-review.")
     if task_verify is not None and not write_tasks:
         raise_usage_error("--task-verify requires --write-tasks.")
 
@@ -90,7 +109,15 @@ def maintain_command(
     written_task_ids: list[str] = []
     skipped_task_ids: list[str] = []
 
-    if propose_tasks:
+    if respond_to_review:
+        result = respond_to_review_scan(result)
+        if write_tasks:
+            written_task_ids, skipped_task_ids = write_proposals_to_tasks(
+                repo_root,
+                result.items,
+                task_verify=task_verify,
+            )
+    elif propose_tasks:
         result = result.model_copy(update={"items": proposals_from_scan(result)})
         if write_tasks:
             written_task_ids, skipped_task_ids = write_proposals_to_tasks(
@@ -101,7 +128,10 @@ def maintain_command(
 
     if json_output:
         payload = result.model_dump(mode="json")
-        if propose_tasks:
+        if respond_to_review or propose_tasks:
+            payload["respond_to_review"] = respond_to_review
+            if respond_to_review:
+                payload["max_cycles"] = max_cycles
             payload["write_tasks"] = write_tasks
             payload["written_task_ids"] = written_task_ids
             payload["skipped_task_ids"] = skipped_task_ids
@@ -112,7 +142,7 @@ def maintain_command(
 
     _print_text(
         result,
-        propose_tasks=propose_tasks,
+        propose_tasks=propose_tasks or respond_to_review,
         write_task_ids=written_task_ids if write_tasks else None,
         skipped_task_ids=skipped_task_ids if write_tasks else None,
     )
