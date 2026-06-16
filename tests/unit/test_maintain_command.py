@@ -2,6 +2,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from click import unstyle
 from typer.testing import CliRunner
 
 from praetor.cli import app
@@ -515,7 +516,7 @@ def test_maintain_once_with_task_verify_requires_write_task_flag(
     )
 
     assert result.exit_code != 0
-    assert "--task-verify requires --write-tasks." in result.output
+    assert "--task-verify requires --write-tasks." in unstyle(result.output)
 
 
 def test_maintain_once_with_propose_tasks_and_write_tasks_creates_task_markdown(
