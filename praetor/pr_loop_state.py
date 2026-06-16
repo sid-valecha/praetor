@@ -40,6 +40,10 @@ def classify_pr_loop_state(raw: Mapping[str, Any] | None) -> PRLoopStateResult:
     review_decision = _normalize_upper(raw.get("reviewDecision"))
     if review_decision == "CHANGES_REQUESTED":
         actionable_review_items.append("Review decision requested changes.")
+    elif review_decision == "REVIEW_REQUIRED":
+        waiting_review_items.append("Review is still required.")
+    elif not review_decision:
+        waiting_review_items.append("Review decision is unavailable.")
 
     thread_signals = _collect_review_thread_items(raw)
     actionable_review_items.extend(thread_signals["actionable"])
@@ -243,7 +247,15 @@ def _collect_check_statuses(
             )
             pending_checks.append(f"Unknown check state: {detail}.")
 
-    for key in ("checkRuns", "nodes", "checks", "commits", "statusCheckRollup"):
+    for key in (
+        "checkRuns",
+        "nodes",
+        "checks",
+        "commits",
+        "commit",
+        "statusCheckRollup",
+        "contexts",
+    ):
         if key in raw:
             nested_present, nested_failing, nested_pending = _collect_check_statuses(raw[key])
             checks_present = checks_present or nested_present

@@ -1,6 +1,7 @@
 import builtins
 import json
 import pytest
+from hashlib import sha1
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -550,6 +551,14 @@ def test_extract_context_files_ignores_bare_url_fragments() -> None:
     assert files == ["README.md"]
 
 
+def test_extract_context_files_ignores_prose_timestamps_and_versions() -> None:
+    proof = "Meeting moved to 10:30 after Python 3.11 started failing in CI."
+
+    files = _extract_context_files(proof)
+
+    assert files == []
+
+
 def test_write_proposals_to_tasks_creates_deterministic_id_and_skips_duplicates(
     tmp_path: Path,
 ) -> None:
@@ -618,6 +627,380 @@ def test_write_proposals_to_tasks_skips_duplicate_after_title_changes(
     assert created_second == []
     assert skipped_second == created_first
     assert len(list_tasks(tmp_path)) == 1
+
+
+def test_write_proposals_to_tasks_creates_new_task_for_new_feedback(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    first_feedback = MaintainItem(
+        source="github:pull_request:octo-org/octo-repo#202",
+        url="https://github.com/octo-org/octo-repo/pull/202",
+        classification="needs_owner",
+        fit="Open PR has unresolved review feedback.",
+        risk="Reviewer requested changes.",
+        proof=(
+            "Pull request #202: Improve docs\n"
+            "Unresolved review thread: src/app.py:42 - Please clarify."
+        ),
+        blocker="Open review feedback must be resolved.",
+        next_action="Owner: resolve review feedback.",
+        title="Address pull request feedback for #202: Improve docs",
+        description="Address first feedback.",
+        context_files=["src/app.py"],
+    )
+    second_feedback = first_feedback.model_copy(
+        update={
+            "proof": (
+                "Pull request #202: Improve docs\n"
+                "Unresolved review thread: tests/test_app.py:7 - Add coverage."
+            ),
+            "description": "Address second feedback.",
+            "context_files": ["tests/test_app.py"],
+        }
+    )
+
+    created_first, skipped_first = write_proposals_to_tasks(tmp_path, [first_feedback])
+    created_second, skipped_second = write_proposals_to_tasks(tmp_path, [second_feedback])
+
+    assert skipped_first == skipped_second == []
+    assert len(created_first) == len(created_second) == 1
+    assert created_first != created_second
+    assert len(list_tasks(tmp_path)) == 2
+
+
+def test_write_proposals_to_tasks_skips_duplicate_after_pr_body_changes(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    proposal = MaintainItem(
+        source="github:pull_request:octo-org/octo-repo#202",
+        url="https://github.com/octo-org/octo-repo/pull/202",
+        classification="needs_owner",
+        fit="Open PR has unresolved review feedback.",
+        risk="Reviewer requested changes.",
+        proof=(
+            "Pull request #202: Improve docs\n"
+            "Original PR description.\n"
+            "Unresolved review thread: src/app.py:42 - Please clarify."
+        ),
+        blocker="Open review feedback must be resolved.",
+        next_action="Owner: resolve review feedback.",
+        title="Address pull request feedback for #202: Improve docs",
+        description="Address first feedback.",
+        context_files=["src/app.py"],
+    )
+    body_edited = proposal.model_copy(
+        update={
+            "proof": (
+                "Pull request #202: Improve docs\n"
+                "Edited PR description.\n"
+                "Unresolved review thread: src/app.py:42 - Please clarify."
+            ),
+            "description": "Address same feedback after body edit.",
+        }
+    )
+
+    created_first, skipped_first = write_proposals_to_tasks(tmp_path, [proposal])
+    created_second, skipped_second = write_proposals_to_tasks(tmp_path, [body_edited])
+
+    assert len(created_first) == 1
+    assert skipped_first == []
+    assert created_second == []
+    assert skipped_second == created_first
+    assert len(list_tasks(tmp_path)) == 1
+
+
+def test_write_proposals_to_tasks_skips_legacy_source_url_duplicate(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    source = "github:pull_request:octo-org/octo-repo#202"
+    url = "https://github.com/octo-org/octo-repo/pull/202"
+    legacy_digest = sha1(f"{source}|{url}".encode("utf-8")).hexdigest()[:8]
+    legacy_task_id = f"maintain-github-pull-request-octo-org-octo-repo-202-{legacy_digest}"
+    create_task(
+        repo_root=tmp_path,
+        title="Address pull request feedback for #202: Improve docs",
+        depends_on=[],
+        task_id=legacy_task_id,
+        body=(
+            "# Address pull request feedback for #202: Improve docs\n\n"
+            "Proof: Pull request #202: Improve docs\n"
+            "Unresolved review thread: src/app.py:42 - Please clarify."
+        ),
+    )
+    proposal = MaintainItem(
+        source=source,
+        url=url,
+        classification="needs_owner",
+        fit="Open PR has unresolved review feedback.",
+        risk="Reviewer requested changes.",
+        proof=(
+            "Pull request #202: Improve docs\n"
+            "Unresolved review thread: src/app.py:42 - Please clarify."
+        ),
+        blocker="Open review feedback must be resolved.",
+        next_action="Owner: resolve review feedback.",
+        title="Address pull request feedback for #202: Improve docs",
+        description="Address same feedback.",
+        context_files=["src/app.py"],
+    )
+
+    created, skipped = write_proposals_to_tasks(tmp_path, [proposal])
+
+    assert created == []
+    assert skipped == [legacy_task_id]
+    assert len(list_tasks(tmp_path)) == 1
+
+
+def test_write_proposals_to_tasks_skips_duplicate_latest_review_after_pr_body_changes(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    proposal = MaintainItem(
+        source="github:pull_request:octo-org/octo-repo#202",
+        url="https://github.com/octo-org/octo-repo/pull/202",
+        classification="needs_owner",
+        fit="Open PR has requested changes.",
+        risk="Reviewer requested changes.",
+        proof=(
+            "Pull request #202: Improve docs\n"
+            "Original PR description.\n"
+            "Latest review: CHANGES_REQUESTED - Please add coverage."
+        ),
+        blocker="Open review feedback must be resolved.",
+        next_action="Owner: resolve review feedback.",
+        title="Address pull request feedback for #202: Improve docs",
+        description="Address first feedback.",
+    )
+    body_edited = proposal.model_copy(
+        update={
+            "proof": (
+                "Pull request #202: Improve docs\n"
+                "Edited PR description.\n"
+                "Latest review: CHANGES_REQUESTED - Please add coverage."
+            ),
+            "description": "Address same feedback after body edit.",
+        }
+    )
+
+    created_first, skipped_first = write_proposals_to_tasks(tmp_path, [proposal])
+    created_second, skipped_second = write_proposals_to_tasks(tmp_path, [body_edited])
+
+    assert len(created_first) == 1
+    assert skipped_first == []
+    assert created_second == []
+    assert skipped_second == created_first
+    assert len(list_tasks(tmp_path)) == 1
+
+
+def test_write_proposals_to_tasks_distinguishes_multiline_review_feedback(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    auth_feedback = MaintainItem(
+        source="github:pull_request:octo-org/octo-repo#202",
+        url="https://github.com/octo-org/octo-repo/pull/202",
+        classification="needs_owner",
+        fit="Open PR has requested changes.",
+        risk="Reviewer requested changes.",
+        proof=(
+            "Pull request #202: Improve docs\n"
+            "Latest review: CHANGES_REQUESTED - Please add tests\n"
+            "for auth."
+        ),
+        blocker="Open review feedback must be resolved.",
+        next_action="Owner: resolve review feedback.",
+        title="Address pull request feedback for #202: Improve docs",
+        description="Address auth feedback.",
+    )
+    billing_feedback = auth_feedback.model_copy(
+        update={
+            "proof": (
+                "Pull request #202: Improve docs\n"
+                "Latest review: CHANGES_REQUESTED - Please add tests\n"
+                "for billing."
+            ),
+            "description": "Address billing feedback.",
+        }
+    )
+
+    created_first, skipped_first = write_proposals_to_tasks(tmp_path, [auth_feedback])
+    created_second, skipped_second = write_proposals_to_tasks(tmp_path, [billing_feedback])
+
+    assert skipped_first == skipped_second == []
+    assert len(created_first) == len(created_second) == 1
+    assert created_first != created_second
+    assert len(list_tasks(tmp_path)) == 2
+
+
+def test_write_proposals_to_tasks_skips_remaining_feedback_already_in_existing_task(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    combined_feedback = MaintainItem(
+        source="github:pull_request:octo-org/octo-repo#202",
+        url="https://github.com/octo-org/octo-repo/pull/202",
+        classification="needs_owner",
+        fit="Open PR has unresolved review feedback.",
+        risk="Reviewer requested changes.",
+        proof=(
+            "Pull request #202: Improve docs\n"
+            "Unresolved review thread: src/app.py:42 - Please clarify.\n"
+            "Unresolved review thread: tests/test_app.py:7 - Add coverage."
+        ),
+        blocker="Open review feedback must be resolved.",
+        next_action="Owner: resolve review feedback.",
+        title="Address pull request feedback for #202: Improve docs",
+        description=(
+            "Source: https://github.com/octo-org/octo-repo/pull/202\n"
+            "Proof: Pull request #202: Improve docs\n"
+            "Unresolved review thread: src/app.py:42 - Please clarify.\n"
+            "Unresolved review thread: tests/test_app.py:7 - Add coverage."
+        ),
+    )
+    remaining_feedback = combined_feedback.model_copy(
+        update={
+            "proof": (
+                "Pull request #202: Improve docs\n"
+                "Unresolved review thread: tests/test_app.py:7 - Add coverage."
+            ),
+            "description": "Address remaining feedback.",
+        }
+    )
+
+    created_first, skipped_first = write_proposals_to_tasks(tmp_path, [combined_feedback])
+    created_second, skipped_second = write_proposals_to_tasks(tmp_path, [remaining_feedback])
+
+    assert len(created_first) == 1
+    assert skipped_first == []
+    assert created_second == []
+    assert skipped_second == created_first
+    assert len(list_tasks(tmp_path)) == 1
+
+
+def test_write_proposals_to_tasks_skips_remaining_feedback_in_same_batch(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    combined_feedback = MaintainItem(
+        source="github:pull_request:octo-org/octo-repo#202",
+        url="https://github.com/octo-org/octo-repo/pull/202",
+        classification="needs_owner",
+        fit="Open PR has unresolved review feedback.",
+        risk="Reviewer requested changes.",
+        proof=(
+            "Pull request #202: Improve docs\n"
+            "Unresolved review thread: src/app.py:42 - Please clarify.\n"
+            "Unresolved review thread: tests/test_app.py:7 - Add coverage."
+        ),
+        blocker="Open review feedback must be resolved.",
+        next_action="Owner: resolve review feedback.",
+        title="Address pull request feedback for #202: Improve docs",
+        description=(
+            "Source: https://github.com/octo-org/octo-repo/pull/202\n"
+            "Proof: Pull request #202: Improve docs\n"
+            "Unresolved review thread: src/app.py:42 - Please clarify.\n"
+            "Unresolved review thread: tests/test_app.py:7 - Add coverage."
+        ),
+    )
+    remaining_feedback = combined_feedback.model_copy(
+        update={
+            "proof": (
+                "Pull request #202: Improve docs\n"
+                "Unresolved review thread: tests/test_app.py:7 - Add coverage."
+            ),
+            "description": (
+                "Source: https://github.com/octo-org/octo-repo/pull/202\n"
+                "Proof: Pull request #202: Improve docs\n"
+                "Unresolved review thread: tests/test_app.py:7 - Add coverage."
+            ),
+        }
+    )
+
+    created, skipped = write_proposals_to_tasks(
+        tmp_path,
+        [combined_feedback, remaining_feedback],
+    )
+
+    assert len(created) == 1
+    assert skipped == created
+    assert len(list_tasks(tmp_path)) == 1
+
+
+def test_write_proposals_to_tasks_does_not_skip_same_feedback_for_different_pr(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    create_task(
+        repo_root=tmp_path,
+        title="Address pull request feedback for #201: Improve docs",
+        depends_on=[],
+        task_id="existing-pr-201-feedback",
+        body=(
+            "# Address pull request feedback for #201: Improve docs\n\n"
+            "Source: https://github.com/octo-org/octo-repo/pull/201\n"
+            "Proof: Pull request #201: Improve docs\n"
+            "Unresolved review thread: src/app.py:42 - Please clarify."
+        ),
+    )
+    proposal = MaintainItem(
+        source="github:pull_request:octo-org/octo-repo#202",
+        url="https://github.com/octo-org/octo-repo/pull/202",
+        classification="needs_owner",
+        fit="Open PR has unresolved review feedback.",
+        risk="Reviewer requested changes.",
+        proof=(
+            "Pull request #202: Improve docs\n"
+            "Unresolved review thread: src/app.py:42 - Please clarify."
+        ),
+        blocker="Open review feedback must be resolved.",
+        next_action="Owner: resolve review feedback.",
+        title="Address pull request feedback for #202: Improve docs",
+        description=(
+            "Source: https://github.com/octo-org/octo-repo/pull/202\n"
+            "Proof: Pull request #202: Improve docs\n"
+            "Unresolved review thread: src/app.py:42 - Please clarify."
+        ),
+    )
+
+    created, skipped = write_proposals_to_tasks(tmp_path, [proposal])
+
+    assert len(created) == 1
+    assert skipped == []
+    assert len(list_tasks(tmp_path)) == 2
+
+
+def test_write_proposals_to_tasks_writes_title_only_issue_with_existing_task(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    create_task(
+        repo_root=tmp_path,
+        title="Existing unrelated task",
+        depends_on=[],
+        task_id="existing-unrelated-task",
+        body="# Existing unrelated task\n",
+    )
+    proposal = MaintainItem(
+        source="github:issue:octo-org/octo-repo#123",
+        url="https://github.com/octo-org/octo-repo/issues/123",
+        classification="needs_owner",
+        fit="Open issue requires owner triage.",
+        risk="No owner review has yet been applied to this request.",
+        proof="Issue #123: Add docs",
+        blocker="Issue is open and user-facing; requires human review.",
+        next_action="Owner: triage issue and create praetor task with verification.",
+        title="Address issue #123: Add docs",
+        description="Address issue.",
+    )
+
+    created, skipped = write_proposals_to_tasks(tmp_path, [proposal])
+
+    assert len(created) == 1
+    assert skipped == []
+    assert len(list_tasks(tmp_path)) == 2
 
 
 def test_create_task_refuses_to_overwrite_existing_task_with_explicit_id(

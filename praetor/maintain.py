@@ -98,7 +98,9 @@ def write_proposals_to_tasks(
     proposals: list[MaintainItem],
 ) -> tuple[list[str], list[str]]:
     """Create task files for proposals using deterministic IDs, skipping duplicates."""
-    existing_task_ids = {task.id for task in list_tasks(repo_root)}
+    existing_tasks = list_tasks(repo_root)
+    existing_tasks_by_id = {task.id: task for task in existing_tasks}
+    existing_task_ids = set(existing_tasks_by_id)
     created_task_ids: list[str] = []
     skipped_task_ids: list[str] = []
 
@@ -108,7 +110,15 @@ def write_proposals_to_tasks(
             skipped_task_ids.append(task_id)
             continue
 
-        create_task(
+        covered_task_id = _existing_task_covering_proposal(
+            existing_tasks_by_id.values(),
+            proposal,
+        )
+        if covered_task_id is not None:
+            skipped_task_ids.append(covered_task_id)
+            continue
+
+        created_task = create_task(
             repo_root=repo_root,
             title=proposal.title or proposal.source,
             depends_on=[],
@@ -119,6 +129,7 @@ def write_proposals_to_tasks(
         )
         created_task_ids.append(task_id)
         existing_task_ids.add(task_id)
+        existing_tasks_by_id[task_id] = created_task
 
     return created_task_ids, skipped_task_ids
 
@@ -144,13 +155,109 @@ def as_repair_proposal(item: MaintainItem) -> MaintainItem | None:
 
 
 def _proposal_task_id(item: MaintainItem) -> str:
+    seed = f"{item.source}|{item.url or ''}|{_proposal_feedback_signature(item)}"
+    return _proposal_task_id_from_seed(item, seed)
+
+
+def _legacy_proposal_task_id(item: MaintainItem) -> str:
     seed = f"{item.source}|{item.url or ''}"
+    return _proposal_task_id_from_seed(item, seed)
+
+
+def _proposal_task_id_from_seed(item: MaintainItem, seed: str) -> str:
     digest = sha1(seed.encode("utf-8")).hexdigest()[:8]
     source_slug = _slugify_for_task_id(item.source)
     max_slug_length = MAX_TASK_ID_LENGTH - len("maintain-") - 1 - len(digest)
     if max_slug_length < 1:
         max_slug_length = 1
     return f"maintain-{source_slug[:max_slug_length]}-{digest}"
+
+
+def _existing_task_covering_proposal(
+    existing_tasks: Iterable[Task],
+    proposal: MaintainItem,
+) -> str | None:
+    legacy_task_id = _legacy_proposal_task_id(proposal)
+    for task in existing_tasks:
+        if task.id == legacy_task_id and _task_matches_proposal(task, proposal):
+            return task.id
+
+    for task in existing_tasks:
+        if _task_matches_proposal(task, proposal):
+            return task.id
+
+    return None
+
+
+def _task_matches_proposal(task: Task, proposal: MaintainItem) -> bool:
+    signature = _proposal_feedback_proof(proposal)
+    task_ids = {
+        _proposal_task_id(proposal),
+        _legacy_proposal_task_id(proposal),
+    }
+    if not signature:
+        return task.id in task_ids
+
+    body = task.body or ""
+    if task.id not in task_ids and not _task_body_scopes_to_proposal(body, proposal):
+        return False
+    return all(line in body for line in signature.splitlines() if line)
+
+
+def _task_body_scopes_to_proposal(body: str, proposal: MaintainItem) -> bool:
+    if proposal.url and proposal.url in body:
+        return True
+    return proposal.source in body
+
+
+def _proposal_feedback_signature(item: MaintainItem) -> str:
+    proof = _proposal_feedback_proof(item)
+    context_files = "\0".join(sorted(item.context_files))
+    return "\0".join(
+        [
+            proof,
+            context_files,
+            item.blocker or "",
+            item.next_action,
+        ]
+    )
+
+
+def _proposal_feedback_proof(item: MaintainItem) -> str:
+    proof_lines = item.proof.splitlines()
+    if proof_lines and re.match(r"^(?:Pull request|Issue) #\d+:", proof_lines[0]):
+        proof_lines = proof_lines[1:]
+
+    if item.source.startswith("github:pull_request:"):
+        actionable_lines: list[str] = []
+        collecting_actionable_block = False
+        for line in proof_lines:
+            if _is_actionable_pr_proof_line(line):
+                collecting_actionable_block = True
+                actionable_lines.append(line.strip())
+            elif collecting_actionable_block:
+                actionable_lines.append(line.strip())
+        if actionable_lines:
+            return "\n".join(actionable_lines)
+
+    return "\n".join(proof_lines).strip()
+
+
+def _is_actionable_pr_proof_line(line: str) -> bool:
+    line = line.strip()
+    return line.startswith(
+        (
+            "Unresolved review thread:",
+            "Unresolved outdated review thread:",
+            "Unresolved review signal:",
+            "Unresolved review comment:",
+            "Latest review:",
+            "Review decision:",
+            "Failing check:",
+            "Pending check:",
+            "Unknown check state:",
+        )
+    )
 
 
 def _proposal_task_body(item: MaintainItem) -> str:
@@ -253,6 +360,8 @@ def _extract_context_files(raw_proof: str) -> list[str]:
         path = (match.group("line_path") or match.group("dotted_path")).strip()
         if not path or path in files:
             continue
+        if not _is_context_file_candidate(path):
+            continue
         if (
             path.startswith("http://")
             or path.startswith("https://")
@@ -262,6 +371,18 @@ def _extract_context_files(raw_proof: str) -> list[str]:
             continue
         files.append(path)
     return files
+
+
+def _is_context_file_candidate(path: str) -> bool:
+    if not any(char.isalpha() for char in path):
+        return False
+    if "/" in path:
+        return True
+    if "." not in path:
+        return True
+
+    suffix = path.rsplit(".", 1)[-1]
+    return any(char.isalpha() for char in suffix)
 
 
 _GITHUB_NUMBER_RE = re.compile(r"#(?P<number>\d+)$")
