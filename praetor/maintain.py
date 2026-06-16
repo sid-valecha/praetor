@@ -43,6 +43,7 @@ class MaintainScan(BaseModel):
     repo_root: str
     items: list[MaintainItem] = Field(default_factory=list)
     latest_run: LatestRunSummary | None = None
+    github_pr_number: int | None = None
     github_pr_loop_state: PRLoopStateResult | None = None
 
 
@@ -91,6 +92,7 @@ def scan(
         repo_root=str(repo_root),
         items=items,
         latest_run=latest_run,
+        github_pr_number=github_pr if github_issue is None else None,
         github_pr_loop_state=github_pr_loop_state,
     )
 
@@ -102,7 +104,110 @@ def proposals_from_scan(scan_result: MaintainScan) -> list[MaintainItem]:
         proposal = as_repair_proposal(item)
         if proposal is not None:
             proposals.append(proposal)
+    loop_state_proposal = _pr_loop_state_repair_proposal(scan_result)
+    if loop_state_proposal is not None:
+        existing_pr_proposal_index = _find_pr_proposal_index(
+            proposals,
+            scan_result.github_pr_number,
+        )
+        if existing_pr_proposal_index is None:
+            proposals.append(loop_state_proposal)
+        else:
+            proposals[existing_pr_proposal_index] = _merge_pr_repair_proposals(
+                proposals[existing_pr_proposal_index],
+                loop_state_proposal,
+            )
     return proposals
+
+
+def _pr_loop_state_repair_proposal(scan_result: MaintainScan) -> MaintainItem | None:
+    loop_state = scan_result.github_pr_loop_state
+    pr_number = scan_result.github_pr_number
+    if pr_number is None or loop_state is None or loop_state.state != "needs_repair":
+        return None
+
+    proof_lines = [f"Pull request #{pr_number}: PR loop repair"]
+    proof_lines.extend(loop_state.actionable_review_items)
+    proof_lines.extend(loop_state.failing_checks)
+    proof = "\n".join(proof_lines)
+    item = MaintainItem(
+        source=f"github:pull_request:current#{pr_number}",
+        classification="needs_owner",
+        fit="Focused PR loop state has actionable repair inputs.",
+        risk="Review feedback, failing checks, or merge conflicts can block PR readiness.",
+        proof=proof,
+        blocker="Focused PR loop state requires repair before clean terminal state.",
+        next_action="Create a repair task, run verify/review, push, then request review again.",
+    )
+    return as_repair_proposal(item)
+
+
+def _find_pr_proposal_index(
+    proposals: list[MaintainItem],
+    pr_number: int | None,
+) -> int | None:
+    if pr_number is None:
+        return None
+    for index, proposal in enumerate(proposals):
+        if _proposal_targets_pr_number(proposal, pr_number):
+            return index
+    return None
+
+
+def _proposal_targets_pr_number(proposal: MaintainItem, pr_number: int) -> bool:
+    if not proposal.source.startswith("github:pull_request:"):
+        return False
+    return _extract_github_number(proposal.source) == str(pr_number)
+
+
+def _merge_pr_repair_proposals(
+    existing: MaintainItem,
+    loop_state: MaintainItem,
+) -> MaintainItem:
+    proof = _merge_pr_loop_proof(existing.proof, loop_state.proof)
+    context_files = list(existing.context_files)
+    for context_file in loop_state.context_files:
+        if context_file not in context_files:
+            context_files.append(context_file)
+
+    merged = existing.model_copy(
+        update={
+            "proof": proof,
+            "context_files": context_files,
+            "suggested_verify": existing.suggested_verify or loop_state.suggested_verify,
+        }
+    )
+    return merged.model_copy(update={"description": _proposal_description(merged)})
+
+
+def _merge_pr_loop_proof(existing_proof: str, loop_state_proof: str) -> str:
+    lines = existing_proof.splitlines()
+    seen = set(lines)
+    seen_evidence_keys = {_proof_line_evidence_key(line) for line in lines}
+    seen_evidence_keys.discard(None)
+    for line in loop_state_proof.splitlines():
+        if re.match(r"^Pull request #\d+:", line):
+            continue
+        evidence_key = _proof_line_evidence_key(line)
+        if evidence_key is not None and evidence_key in seen_evidence_keys:
+            continue
+        if line and line not in seen:
+            lines.append(line)
+            seen.add(line)
+            if evidence_key is not None:
+                seen_evidence_keys.add(evidence_key)
+    return "\n".join(lines)
+
+
+def _proof_line_evidence_key(line: str) -> str | None:
+    match = re.match(
+        r"^Failing check: (?P<name>.+?) "
+        r"\((?:status=[^)]*,\s*)?conclusion=[^)]*\)\.$",
+        line.strip(),
+    )
+    if match is not None:
+        return f"failing-check:{match.group('name').strip()}"
+    return None
 
 
 def write_proposals_to_tasks(

@@ -112,6 +112,157 @@ def test_scan_includes_pr_loop_state_for_focused_github_pr(tmp_path: Path) -> No
     assert result.github_pr_loop_state.failing_checks == ["Failing check: ci (conclusion=failure)."]
 
 
+def test_scan_records_focused_github_pr_number_for_loop_state(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+
+    def github_provider(
+        repo_root: Path,
+        *,
+        github_pr: int | None = None,
+        github_issue: int | None = None,
+    ) -> list[MaintainItem]:
+        del repo_root, github_issue
+        assert github_pr == 22
+        return []
+
+    def pr_loop_state_provider(repo_root: Path, github_pr: int) -> PRLoopStateResult:
+        del repo_root
+        assert github_pr == 22
+        return PRLoopStateResult(state="clean")
+
+    result = scan(
+        tmp_path,
+        github_pr=22,
+        github_provider=github_provider,
+        pr_loop_state_provider=pr_loop_state_provider,
+    )
+
+    assert result.github_pr_number == 22
+
+
+def test_proposals_from_scan_includes_focused_pr_loop_state_repair(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    result = MaintainScan(
+        repo_root=str(tmp_path),
+        github_pr_number=22,
+        github_pr_loop_state=PRLoopStateResult(
+            state="needs_repair",
+            actionable_review_items=[
+                "Unresolved review thread: src/app.py:42 - Please clarify behavior."
+            ],
+            failing_checks=["Failing check: test (conclusion=failure)."],
+        ),
+    )
+
+    proposals = proposals_from_scan(result)
+
+    assert len(proposals) == 1
+    proposal = proposals[0]
+    assert proposal.source == "github:pull_request:current#22"
+    assert proposal.title == "Address pull request feedback for #22: PR loop repair"
+    assert proposal.description is not None
+    assert "Unresolved review thread: src/app.py:42 - Please clarify behavior." in (
+        proposal.description
+    )
+    assert "Failing check: test (conclusion=failure)." in proposal.description
+    assert proposal.context_files == ["src/app.py"]
+    assert proposal.suggested_verify is None
+
+
+def test_proposals_from_scan_skips_loop_state_repair_when_pr_intake_already_covers_it(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    intake_item = MaintainItem(
+        source="github:pull_request:octo-org/octo-repo#22",
+        url="https://github.com/octo-org/octo-repo/pull/22",
+        classification="needs_owner",
+        fit="Open PR has failing checks.",
+        risk="Failing checks block PR readiness.",
+        proof=(
+            "Pull request #22: Repair CI\n"
+            "Failing check: test (status=completed, conclusion=failure)."
+        ),
+        blocker="Failing checks must be repaired.",
+        next_action="Owner: fix failing checks.",
+    )
+    result = MaintainScan(
+        repo_root=str(tmp_path),
+        items=[intake_item],
+        github_pr_number=22,
+        github_pr_loop_state=PRLoopStateResult(
+            state="needs_repair",
+            failing_checks=["Failing check: test (conclusion=failure)."],
+        ),
+    )
+
+    proposals = proposals_from_scan(result)
+    created, skipped = write_proposals_to_tasks(tmp_path, proposals)
+
+    assert len(proposals) == 1
+    assert proposals[0].source == intake_item.source
+    assert len(created) == 1
+    assert skipped == []
+
+
+def test_proposals_from_scan_merges_loop_state_evidence_into_existing_pr_proposal(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    intake_item = MaintainItem(
+        source="github:pull_request:octo-org/octo-repo#22",
+        url="https://github.com/octo-org/octo-repo/pull/22",
+        classification="needs_owner",
+        fit="Open PR has unresolved review feedback.",
+        risk="Reviewer requested changes.",
+        proof=(
+            "Pull request #22: Repair review\n"
+            "Unresolved review thread: src/app.py:42 - Please clarify behavior."
+        ),
+        blocker="Open review feedback must be resolved.",
+        next_action="Owner: resolve review feedback.",
+    )
+    result = MaintainScan(
+        repo_root=str(tmp_path),
+        items=[intake_item],
+        github_pr_number=22,
+        github_pr_loop_state=PRLoopStateResult(
+            state="needs_repair",
+            failing_checks=["Failing check: test (conclusion=failure)."],
+        ),
+    )
+
+    proposals = proposals_from_scan(result)
+
+    assert len(proposals) == 1
+    [proposal] = proposals
+    assert proposal.source == intake_item.source
+    assert proposal.description is not None
+    assert "Unresolved review thread: src/app.py:42 - Please clarify behavior." in (
+        proposal.description
+    )
+    assert "Failing check: test (conclusion=failure)." in proposal.description
+    assert proposal.context_files == ["src/app.py"]
+
+
+def test_proposals_from_scan_skips_non_repair_pr_loop_state(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+    result = MaintainScan(
+        repo_root=str(tmp_path),
+        github_pr_number=22,
+        github_pr_loop_state=PRLoopStateResult(
+            state="waiting",
+            waiting_review_items=["Review is still required."],
+        ),
+    )
+
+    proposals = proposals_from_scan(result)
+
+    assert proposals == []
+
+
 def test_default_github_provider_fallback_uses_github_intake_source(
     tmp_path: Path,
     monkeypatch,
@@ -857,6 +1008,96 @@ def test_write_proposals_to_tasks_skips_duplicate_latest_review_after_pr_body_ch
     assert created_second == []
     assert skipped_second == created_first
     assert len(list_tasks(tmp_path)) == 1
+
+
+def test_write_proposals_to_tasks_skips_same_failing_check_after_loop_state_merge(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    source = "github:pull_request:octo-org/octo-repo#202"
+    url = "https://github.com/octo-org/octo-repo/pull/202"
+    intake_proposal = MaintainItem(
+        source=source,
+        url=url,
+        classification="needs_owner",
+        fit="Open PR has failing checks.",
+        risk="Failing checks block PR readiness.",
+        proof=(
+            "Pull request #202: Repair CI\n"
+            "Failing check: ci (status=completed, conclusion=failure)."
+        ),
+        blocker="Failing checks must be repaired.",
+        next_action="Owner: fix failing checks.",
+        title="Address pull request feedback for #202: Repair CI",
+        description=(
+            "Source: https://github.com/octo-org/octo-repo/pull/202\n"
+            "Proof: Pull request #202: Repair CI\n"
+            "Failing check: ci (status=completed, conclusion=failure)."
+        ),
+    )
+    loop_state = PRLoopStateResult(
+        state="needs_repair",
+        failing_checks=["Failing check: ci (conclusion=failure)."],
+    )
+    merged_scan = MaintainScan(
+        repo_root=str(tmp_path),
+        items=[intake_proposal],
+        github_pr_number=202,
+        github_pr_loop_state=loop_state,
+    )
+
+    created_first, skipped_first = write_proposals_to_tasks(tmp_path, [intake_proposal])
+    created_second, skipped_second = write_proposals_to_tasks(
+        tmp_path,
+        proposals_from_scan(merged_scan),
+    )
+
+    assert len(created_first) == 1
+    assert skipped_first == []
+    assert created_second == []
+    assert skipped_second == created_first
+    assert len(list_tasks(tmp_path)) == 1
+
+
+def test_proposals_from_scan_preserves_matrix_check_names_when_merging_loop_state(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    intake_item = MaintainItem(
+        source="github:pull_request:octo-org/octo-repo#202",
+        url="https://github.com/octo-org/octo-repo/pull/202",
+        classification="needs_owner",
+        fit="Open PR has failing checks.",
+        risk="Failing checks block PR readiness.",
+        proof=(
+            "Pull request #202: Repair CI\n"
+            "Failing check: tests (py310) (status=completed, conclusion=failure)."
+        ),
+        blocker="Failing checks must be repaired.",
+        next_action="Owner: fix failing checks.",
+    )
+    result = MaintainScan(
+        repo_root=str(tmp_path),
+        items=[intake_item],
+        github_pr_number=202,
+        github_pr_loop_state=PRLoopStateResult(
+            state="needs_repair",
+            failing_checks=[
+                "Failing check: tests (py310) (conclusion=failure).",
+                "Failing check: tests (py311) (conclusion=failure).",
+            ],
+        ),
+    )
+
+    proposals = proposals_from_scan(result)
+
+    assert len(proposals) == 1
+    [proposal] = proposals
+    assert "Failing check: tests (py310) (status=completed, conclusion=failure)." in (
+        proposal.proof
+    )
+    assert "Failing check: tests (py310) (conclusion=failure)." not in proposal.proof
+    assert "Failing check: tests (py311) (conclusion=failure)." in proposal.proof
 
 
 def test_write_proposals_to_tasks_distinguishes_multiline_review_feedback(
