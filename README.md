@@ -84,13 +84,16 @@ Run one-time adapter checks before broad adoption:
 - Keep review mode enabled for risky work: `--reviewer-adapter` can be the same as or different from `--adapter`.
 - Treat networked model calls as a trust boundary; keep logs and prompts in `.praetor` local and scoped.
 
-## Experiment: `praetor maintain --once`
+## `praetor maintain --once` intake
 
-`praetor maintain --once` is experimental and local-oriented. It performs a single maintainer pass that is intended to stay readable and recoverable before introducing mutation. Use it on non-critical work first.
+`praetor maintain --once` is report-only by default; local task writes require explicit `--propose-tasks --write-tasks`.
 
-- Local, read-only pass intent in this slice.
-- Intended default behavior is `report-only`: classification and evidence collection.
-- Avoid passing auto-commit or auto-merge actions until this section is explicitly documented as stable in release notes.
+- It performs a local one-pass maintainer triage and optional read-only GitHub intake.
+- `--github`, `--github-pr`, and `--github-issue` are opt-in for GitHub input.
+- `--propose-tasks` converts findings into deterministic repair proposals.
+- `--write-tasks` writes deterministic `.praetor/tasks/*.md` files for proposal-backed work items.
+- Proposal verify hints and final verify strategy are still owner-supplied outside this command.
+- No autonomous GitHub mutations, pushes, review requests, or merges are part of the shipped maintainer flow.
 
 ## Quickstart: Parallel Mode
 
@@ -152,7 +155,7 @@ Pass `--once` to get the same single-pass behavior while exercising the loop com
 | `praetor status` | `--json` | Print task status. With `--json`, emit a JSON array (one object per task with all schema fields plus a derived `ready` bool) instead of the Rich table — for scripts, CI pipelines, and non-MCP agent callers. |
 | `praetor run` | `--adapter`, `--model`, `--effort`, `--reviewer-adapter`, `--reviewer-model`, `--reviewer-effort`, `--max-parallel`, `--base-branch`, `--merge-strategy`, `--max-iterations`, `--max-runtime` | Drain ready tasks with the selected agent adapter. `--max-parallel 1` runs sequentially; values greater than 1 use worktrees. `--model` and `--effort` are Claude/Codex executor options; reviewer options override the review route for that run. |
 | `praetor loop` | `--adapter`, `--model`, `--effort`, `--reviewer-adapter`, `--reviewer-model`, `--reviewer-effort`, `--max-parallel`, `--base-branch`, `--merge-strategy`, `--once`, `--poll-interval`, `--max-iterations`, `--max-runtime` | Drain once, then keep watching `.praetor/tasks/` and drain again when new work appears. Executor and reviewer model/effort flags follow the same semantics as `praetor run`. |
-| `praetor maintain` | `--once`, `--github`, `--github-pr`, `--github-issue`, `--propose-tasks`, `--write-tasks`, `--json` | Experimental maintainer pass for Praetor task/run-state triage and optional GitHub issue/PR/CI intake. `--propose-tasks` converts applicable GitHub findings into task-shaped proposals without writing task files. Add explicit `--write-tasks` to create deterministic `.praetor/tasks/*.md` files from those proposals; GitHub mutation, branch pushes, review requests, and merges are still not performed. |
+| `praetor maintain` | `--once`, `--github`, `--github-pr`, `--github-issue`, `--propose-tasks`, `--write-tasks`, `--json` | Read-only maintainer intake for local state triage and optional read-only GitHub issue/PR/CI intake. `--propose-tasks` converts findings into deterministic repair proposals; `--write-tasks` materializes generated proposals as deterministic `.praetor/tasks/*.md` files. PR-loop state classification exists in the `praetor.pr_loop_state` library module, but CLI exposure is tracked separately. Conservatively, the shipped command is `report-only` by default and does not perform autonomous GitHub mutation, branch push, review-request, or merge actions. |
 | `praetor merge` | `TASK_ID...`, `--all`, `--retry`, `--base-branch` | Merge `pending_merge` tasks back to the base branch. With `--retry`, also retry `merge_failed` tasks. |
 | `praetor reset` | `TASK_ID...`, `--clean-worktree`, `--all-stale` | Reset failed, blocked, merge-failed, or stale-running tasks back to `pending`. |
 | `praetor logs <task-id>` | `<task-id>` | Print the saved log for one task. |
