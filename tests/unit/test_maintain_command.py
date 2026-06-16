@@ -1,6 +1,7 @@
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 from click import unstyle
 from typer.testing import CliRunner
@@ -819,6 +820,75 @@ def test_respond_to_review_run_repairs_drains_scoped_repair_tasks(
     tasks_by_id = {task.id: task for task in list_tasks(tmp_path)}
     assert tasks_by_id["unrelated-ready"].status is TaskStatus.pending
     assert tasks_by_id[repair_task_id].review == "strict"
+
+
+def test_respond_to_review_run_repairs_refreshes_latest_run_after_drain(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    events: list[str] = []
+
+    def fake_scan(
+        repo_root: Path,
+        *,
+        include_github: bool = False,
+        github_pr: int | None = None,
+        github_issue: int | None = None,
+    ):
+        del include_github, github_issue
+        from praetor.maintain import MaintainScan
+
+        return MaintainScan(
+            repo_root=str(repo_root),
+            github_pr_number=github_pr,
+            github_pr_loop_state=PRLoopStateResult(
+                state="needs_repair",
+                actionable_review_items=[
+                    "Unresolved review thread: src/app.py:42 - Please clarify."
+                ],
+            ),
+        )
+
+    def fake_drain_queue(repo_root: Path, adapter: object, **kwargs: object) -> None:
+        del repo_root, adapter, kwargs
+        events.append("drain")
+
+    def fake_latest_run(repo_root: Path) -> SimpleNamespace:
+        del repo_root
+        assert events == ["drain"]
+        return SimpleNamespace(id="run-after-drain", status="completed")
+
+    monkeypatch.setattr("praetor.commands.maintain.scan", fake_scan)
+    monkeypatch.setattr(
+        "praetor.commands.maintain.get_adapter", lambda *_args, **_kwargs: MockAdapter()
+    )
+    monkeypatch.setattr(
+        "praetor.commands.maintain.resolve_reviewer_adapter", lambda **_kwargs: None
+    )
+    monkeypatch.setattr("praetor.commands.maintain.drain_queue", fake_drain_queue)
+    monkeypatch.setattr("praetor.commands.maintain.load_latest_run", fake_latest_run)
+
+    result = runner.invoke(
+        app,
+        [
+            "maintain",
+            "--github-pr",
+            "88",
+            "--respond-to-review",
+            "--write-tasks",
+            "--run-repairs",
+            "--task-verify",
+            "pytest -q",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["drain_started"] is True
+    assert payload["latest_run"] == {"id": "run-after-drain", "status": "completed"}
 
 
 def test_respond_to_review_run_repairs_skips_stale_task_without_requested_verify(

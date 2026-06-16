@@ -9,6 +9,7 @@ from typer._click.exceptions import ClickException
 from praetor.adapters import get_adapter, resolve_reviewer_adapter
 from praetor.commands import raise_usage_error, require_workspace
 from praetor.maintain import (
+    LatestRunSummary,
     MaintainItem,
     MaintainScan,
     proposals_from_scan,
@@ -17,6 +18,7 @@ from praetor.maintain import (
     write_proposals_to_tasks,
 )
 from praetor.runner import drain_queue
+from praetor.run_history import latest_run as load_latest_run
 from praetor.state import list_tasks
 
 console = Console()
@@ -201,6 +203,7 @@ def maintain_command(
             except Exception as exc:
                 raise ClickException(str(exc)) from exc
             drain_started = True
+            result = _with_current_latest_run(repo_root, result)
     elif propose_tasks:
         result = result.model_copy(update={"items": proposals_from_scan(result)})
         if write_tasks:
@@ -259,6 +262,16 @@ def _repair_task_ids_for_drain(
         and tasks_by_id[task_id].review == task_review
     ]
     return _dedupe_task_ids(written_task_ids + skipped_with_requested_verify)
+
+
+def _with_current_latest_run(repo_root: Path, result: MaintainScan) -> MaintainScan:
+    latest_run_record = load_latest_run(repo_root)
+    latest_run = (
+        LatestRunSummary(id=latest_run_record.id, status=latest_run_record.status)
+        if latest_run_record is not None
+        else None
+    )
+    return result.model_copy(update={"latest_run": latest_run})
 
 
 def _print_text(
