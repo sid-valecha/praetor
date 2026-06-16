@@ -600,6 +600,36 @@ def test_write_proposals_to_tasks_creates_deterministic_id_and_skips_duplicates(
     assert tasks[0].context_files == ["src/app.py"]
 
 
+def test_write_proposals_to_tasks_uses_task_verify_override(
+    tmp_path: Path,
+) -> None:
+    init_workspace(tmp_path)
+    proposal = MaintainItem(
+        source="github:issue:octo-org/octo-repo#101",
+        url="https://github.com/octo-org/octo-repo/issues/101",
+        classification="needs_owner",
+        fit="Open issue requires owner triage.",
+        risk="Needs owner triage.",
+        proof="Issue #101: Add endpoint docs",
+        blocker="Needs owner triage.",
+        next_action="Owner: triage issue.",
+        title="Address issue #101: Add endpoint docs",
+        suggested_verify="pytest",
+    )
+
+    created, skipped = write_proposals_to_tasks(
+        tmp_path,
+        [proposal],
+        task_verify="pytest -q",
+    )
+
+    assert len(created) == 1
+    assert skipped == []
+    tasks = list_tasks(tmp_path)
+    assert len(tasks) == 1
+    assert tasks[0].verify == "pytest -q"
+
+
 def test_write_proposals_to_tasks_skips_duplicate_after_title_changes(
     tmp_path: Path,
 ) -> None:

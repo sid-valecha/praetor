@@ -8,7 +8,7 @@ from praetor.cli import app
 from praetor.maintain import MaintainItem
 from praetor.frontmatter import dump_task
 from praetor.models import Task, TaskStatus
-from praetor.state import init_workspace
+from praetor.state import init_workspace, list_tasks
 
 runner = CliRunner()
 
@@ -501,6 +501,23 @@ def test_maintain_once_with_propose_tasks_requires_write_task_flag(
     assert calls == []
 
 
+def test_maintain_once_with_task_verify_requires_write_task_flag(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["maintain", "--once", "--propose-tasks", "--task-verify", "pytest -q"],
+        color=False,
+    )
+
+    assert result.exit_code != 0
+    assert "--task-verify requires --write-tasks." in result.output
+
+
 def test_maintain_once_with_propose_tasks_and_write_tasks_creates_task_markdown(
     tmp_path: Path,
     monkeypatch,
@@ -557,6 +574,63 @@ def test_maintain_once_with_propose_tasks_and_write_tasks_creates_task_markdown(
     assert payload_rerun["written_count"] == 0
     assert payload_rerun["skipped_count"] == 1
     assert payload_rerun["skipped_task_ids"] == payload["written_task_ids"]
+
+
+def test_maintain_once_with_propose_tasks_and_task_verify_uses_override(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    proposal = MaintainItem(
+        source="github:issue:octo-org/octo-repo#101",
+        url="https://github.com/octo-org/octo-repo/issues/101",
+        classification="needs_owner",
+        fit="Open issue requires owner triage.",
+        risk="Needs owner triage.",
+        proof="Issue #101: Add endpoint docs",
+        blocker="Needs owner triage.",
+        next_action="Owner: triage issue.",
+    )
+
+    def fake_scan(
+        repo_root: Path,
+        *,
+        include_github: bool = False,
+        github_pr: int | None = None,
+        github_issue: int | None = None,
+    ):
+        del repo_root, github_pr, github_issue
+        assert include_github
+        from praetor.maintain import MaintainScan
+
+        return MaintainScan(repo_root=str(tmp_path), items=[proposal])
+
+    monkeypatch.setattr("praetor.commands.maintain.scan", fake_scan)
+
+    result = runner.invoke(
+        app,
+        [
+            "maintain",
+            "--once",
+            "--github",
+            "--propose-tasks",
+            "--write-tasks",
+            "--task-verify",
+            "pytest -q",
+            "--json",
+        ],
+        color=False,
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["write_tasks"] is True
+
+    tasks = list_tasks(tmp_path)
+    assert len(tasks) == 1
+    assert tasks[0].verify == "pytest -q"
 
 
 def test_maintain_once_with_propose_tasks_skips_github_intake_diagnostic(
