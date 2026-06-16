@@ -144,6 +144,8 @@ def maintain_command(
         raise_usage_error("--run-repairs requires --write-tasks.")
     if run_repairs and task_verify is None:
         raise_usage_error("--run-repairs requires --task-verify.")
+    if task_verify is not None and not task_verify.strip():
+        raise_usage_error("--task-verify must not be blank.")
     if max_review_retries is not None and max_review_retries < 0:
         raise_usage_error("--max-review-retries must be >= 0.")
     if write_tasks and not (propose_tasks or respond_to_review):

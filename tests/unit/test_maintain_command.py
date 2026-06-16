@@ -745,6 +745,32 @@ def test_respond_to_review_run_repairs_requires_task_verify(
     assert "--run-repairs requires --task-verify." in unstyle(result.output)
 
 
+def test_respond_to_review_run_repairs_rejects_blank_task_verify(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "maintain",
+            "--github-pr",
+            "88",
+            "--respond-to-review",
+            "--write-tasks",
+            "--run-repairs",
+            "--task-verify",
+            "   ",
+        ],
+        color=False,
+    )
+
+    assert result.exit_code != 0
+    assert "--task-verify must not be blank." in unstyle(result.output)
+
+
 def test_respond_to_review_run_repairs_drains_scoped_repair_tasks(
     tmp_path: Path,
     monkeypatch,
