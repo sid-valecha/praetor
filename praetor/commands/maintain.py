@@ -4,7 +4,9 @@ from typing import Annotated
 
 from rich.console import Console
 import typer
+from typer._click.exceptions import ClickException
 
+from praetor.adapters import get_adapter, resolve_reviewer_adapter
 from praetor.commands import raise_usage_error, require_workspace
 from praetor.maintain import (
     MaintainItem,
@@ -14,6 +16,7 @@ from praetor.maintain import (
     scan,
     write_proposals_to_tasks,
 )
+from praetor.runner import drain_queue
 
 console = Console()
 
@@ -64,6 +67,44 @@ def maintain_command(
             help="Maximum review-response cycles for future authorized drains.",
         ),
     ] = 3,
+    run_repairs: Annotated[
+        bool,
+        typer.Option(
+            "--run-repairs",
+            help="Run generated repair tasks through the local executor, verify, and reviewer gates.",
+        ),
+    ] = False,
+    adapter: Annotated[
+        str,
+        typer.Option("--adapter", help="Agent adapter name for --run-repairs."),
+    ] = "claude",
+    model: Annotated[
+        str | None,
+        typer.Option("--model", help="Model name for the repair executor adapter."),
+    ] = None,
+    effort: Annotated[
+        str | None,
+        typer.Option("--effort", help="Effort level for the repair executor adapter."),
+    ] = None,
+    max_review_retries: Annotated[
+        int | None,
+        typer.Option(
+            "--max-review-retries",
+            help="Maximum automatic reviewer-rejection retries for repair tasks.",
+        ),
+    ] = None,
+    reviewer_adapter: Annotated[
+        str | None,
+        typer.Option("--reviewer-adapter", help="Reviewer adapter for repair tasks."),
+    ] = None,
+    reviewer_model: Annotated[
+        str | None,
+        typer.Option("--reviewer-model", help="Reviewer model for repair tasks."),
+    ] = None,
+    reviewer_effort: Annotated[
+        str | None,
+        typer.Option("--reviewer-effort", help="Reviewer effort for repair tasks."),
+    ] = None,
     write_tasks: Annotated[
         bool,
         typer.Option(
@@ -94,6 +135,14 @@ def maintain_command(
         raise_usage_error("--respond-to-review requires --github-pr.")
     if max_cycles < 1:
         raise_usage_error("--max-cycles must be at least 1.")
+    if run_repairs and not respond_to_review:
+        raise_usage_error("--run-repairs requires --respond-to-review.")
+    if run_repairs and not write_tasks:
+        raise_usage_error("--run-repairs requires --write-tasks.")
+    if run_repairs and task_verify is None:
+        raise_usage_error("--run-repairs requires --task-verify.")
+    if max_review_retries is not None and max_review_retries < 0:
+        raise_usage_error("--max-review-retries must be >= 0.")
     if write_tasks and not (propose_tasks or respond_to_review):
         raise_usage_error("--write-tasks requires --propose-tasks or --respond-to-review.")
     if task_verify is not None and not write_tasks:
@@ -108,6 +157,8 @@ def maintain_command(
     )
     written_task_ids: list[str] = []
     skipped_task_ids: list[str] = []
+    repair_task_ids: list[str] = []
+    drain_started = False
 
     if respond_to_review:
         result = respond_to_review_scan(result)
@@ -117,6 +168,29 @@ def maintain_command(
                 result.items,
                 task_verify=task_verify,
             )
+            repair_task_ids = _dedupe_task_ids(written_task_ids + skipped_task_ids)
+        if run_repairs and repair_task_ids:
+            try:
+                agent_adapter = get_adapter(adapter, model=model, effort=effort)
+                review_adapter = resolve_reviewer_adapter(
+                    executor_adapter=adapter,
+                    executor_model=model,
+                    executor_effort=effort,
+                    reviewer_adapter=reviewer_adapter,
+                    reviewer_model=reviewer_model,
+                    reviewer_effort=reviewer_effort,
+                )
+                drain_queue(
+                    repo_root,
+                    agent_adapter,
+                    max_iterations=max_cycles,
+                    max_review_retries=max_review_retries,
+                    reviewer_adapter=review_adapter,
+                    task_ids=set(repair_task_ids),
+                )
+            except Exception as exc:
+                raise ClickException(str(exc)) from exc
+            drain_started = True
     elif propose_tasks:
         result = result.model_copy(update={"items": proposals_from_scan(result)})
         if write_tasks:
@@ -132,6 +206,9 @@ def maintain_command(
             payload["respond_to_review"] = respond_to_review
             if respond_to_review:
                 payload["max_cycles"] = max_cycles
+                payload["run_repairs"] = run_repairs
+                payload["repair_task_ids"] = repair_task_ids
+                payload["drain_started"] = drain_started
             payload["write_tasks"] = write_tasks
             payload["written_task_ids"] = written_task_ids
             payload["skipped_task_ids"] = skipped_task_ids
@@ -146,6 +223,10 @@ def maintain_command(
         write_task_ids=written_task_ids if write_tasks else None,
         skipped_task_ids=skipped_task_ids if write_tasks else None,
     )
+
+
+def _dedupe_task_ids(task_ids: list[str]) -> list[str]:
+    return list(dict.fromkeys(task_ids))
 
 
 def _print_text(

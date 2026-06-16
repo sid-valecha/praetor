@@ -4,6 +4,7 @@ Only the main runner thread writes task markdown. Worker threads may execute
 adapters, but they return TaskResult objects for the main thread to apply.
 """
 
+from collections.abc import Iterable
 from concurrent.futures import FIRST_COMPLETED, Future, wait
 from dataclasses import dataclass
 import subprocess
@@ -103,8 +104,13 @@ def run_once(
     recorder: RunRecorder | None = None,
     max_review_retries: int = 0,
     reviewer_adapter: AgentAdapter | None = None,
+    task_ids: Iterable[str] | None = None,
 ) -> bool:
-    ready_tasks = compute_ready_set(list_tasks(repo_root))
+    selected_task_ids = _normalize_task_filter(task_ids)
+    ready_tasks = _filter_tasks_by_ids(
+        compute_ready_set(list_tasks(repo_root)),
+        selected_task_ids,
+    )
     if not ready_tasks:
         return False
 
@@ -246,9 +252,11 @@ def drain_queue(
     max_runtime_s: float | None = None,
     max_review_retries: int | None = None,
     reviewer_adapter: AgentAdapter | None = None,
+    task_ids: Iterable[str] | None = None,
 ) -> None:
     _raise_on_stale_running(list_tasks(repo_root))
     resolved_max_review_retries = resolve_max_review_retries(repo_root, max_review_retries)
+    selected_task_ids = _normalize_task_filter(task_ids)
 
     if not isinstance(max_parallel, int) or isinstance(max_parallel, bool) or max_parallel < 1:
         msg = "max_parallel must be >= 1"
@@ -283,6 +291,7 @@ def drain_queue(
                     recorder=recorder,
                     max_review_retries=resolved_max_review_retries,
                     reviewer_adapter=reviewer_adapter,
+                    task_ids=selected_task_ids,
                 ):
                     break
                 guardrails.consume_iteration()
@@ -299,19 +308,41 @@ def drain_queue(
             guardrails,
             resolved_max_review_retries,
             reviewer_adapter,
+            selected_task_ids,
         )
     except Exception:
         run_status = "failed"
         raise
     finally:
-        if run_status == "completed" and _guardrail_stopped_ready_work(repo_root, guardrails):
+        if run_status == "completed" and _guardrail_stopped_ready_work(
+            repo_root,
+            guardrails,
+            selected_task_ids,
+        ):
             run_status = "stopped"
         recorder.finish_run(run_status)
         _emit(on_event, "drain_finished")
 
 
-def _guardrail_stopped_ready_work(repo_root: Path, guardrails: DrainGuardrails) -> bool:
-    return guardrails.reached_limit() and bool(compute_ready_set(list_tasks(repo_root)))
+def _normalize_task_filter(task_ids: Iterable[str] | None) -> set[str] | None:
+    if task_ids is None:
+        return None
+    return set(task_ids)
+
+
+def _filter_tasks_by_ids(tasks: list[Task], task_ids: set[str] | None) -> list[Task]:
+    if task_ids is None:
+        return tasks
+    return [task for task in tasks if task.id in task_ids]
+
+
+def _guardrail_stopped_ready_work(
+    repo_root: Path,
+    guardrails: DrainGuardrails,
+    task_ids: set[str] | None,
+) -> bool:
+    ready_tasks = _filter_tasks_by_ids(compute_ready_set(list_tasks(repo_root)), task_ids)
+    return guardrails.reached_limit() and bool(ready_tasks)
 
 
 def _drain_parallel(
@@ -325,6 +356,7 @@ def _drain_parallel(
     guardrails: DrainGuardrails,
     max_review_retries: int,
     reviewer_adapter: AgentAdapter | None,
+    task_ids: set[str] | None,
 ) -> None:
     in_flight: dict[Future[TaskResult], RunningTask] = {}
 
@@ -339,6 +371,7 @@ def _drain_parallel(
                 on_event,
                 recorder,
                 guardrails,
+                task_ids,
             )
             if not in_flight:
                 if not made_progress:
@@ -370,6 +403,7 @@ def _submit_ready_tasks(
     on_event: EventCallback | None,
     recorder: RunRecorder,
     guardrails: DrainGuardrails,
+    task_ids: set[str] | None,
 ) -> bool:
     if not guardrails.can_start_task():
         return False
@@ -379,7 +413,7 @@ def _submit_ready_tasks(
     if capacity <= 0:
         return False
 
-    ready_tasks = compute_ready_set(list_tasks(repo_root))
+    ready_tasks = _filter_tasks_by_ids(compute_ready_set(list_tasks(repo_root)), task_ids)
     if not ready_tasks:
         return False
 
