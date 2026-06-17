@@ -60,6 +60,29 @@ def test_drain_queue_allows_pending_merge_resting_state(tmp_path: Path) -> None:
     assert get_task(tmp_path, "task-a").status is TaskStatus.pending_merge
 
 
+def test_drain_queue_task_filter_skips_unselected_ready_tasks(tmp_path: Path) -> None:
+    init_workspace(tmp_path)
+    repair = Task(
+        id="repair-a",
+        status=TaskStatus.pending,
+        created=datetime(2026, 6, 7, 12, 0, tzinfo=UTC),
+        body="# repair-a\n",
+    )
+    unrelated = Task(
+        id="unrelated-a",
+        status=TaskStatus.pending,
+        created=datetime(2026, 6, 7, 12, 1, tzinfo=UTC),
+        body="# unrelated-a\n",
+    )
+    dump_task(repair, tmp_path / ".praetor" / "tasks" / "repair-a.md")
+    dump_task(unrelated, tmp_path / ".praetor" / "tasks" / "unrelated-a.md")
+
+    drain_queue(tmp_path, MockAdapter(), task_ids={"repair-a"})
+
+    assert get_task(tmp_path, "repair-a").status is TaskStatus.done
+    assert get_task(tmp_path, "unrelated-a").status is TaskStatus.pending
+
+
 def test_drain_queue_rejects_boolean_max_review_retries(tmp_path: Path) -> None:
     init_workspace(tmp_path)
 

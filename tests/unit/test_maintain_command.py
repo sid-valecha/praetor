@@ -1,12 +1,14 @@
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 from click import unstyle
 from typer.testing import CliRunner
 
 from praetor.cli import app
 from praetor.maintain import MaintainItem
+from praetor.adapters.mock import MockAdapter
 from praetor.frontmatter import dump_task
 from praetor.models import Task, TaskStatus
 from praetor.pr_loop_state import PRLoopStateResult
@@ -700,6 +702,384 @@ def test_respond_to_review_needs_repair_writes_only_with_write_tasks(
     tasks = list_tasks(tmp_path)
     assert len(tasks) == 1
     assert tasks[0].verify == "pytest -q"
+
+
+def test_respond_to_review_run_repairs_requires_write_tasks(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["maintain", "--github-pr", "88", "--respond-to-review", "--run-repairs"],
+        color=False,
+    )
+
+    assert result.exit_code != 0
+    assert "--run-repairs requires --write-tasks." in unstyle(result.output)
+
+
+def test_respond_to_review_run_repairs_requires_task_verify(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "maintain",
+            "--github-pr",
+            "88",
+            "--respond-to-review",
+            "--write-tasks",
+            "--run-repairs",
+        ],
+        color=False,
+    )
+
+    assert result.exit_code != 0
+    assert "--run-repairs requires --task-verify." in unstyle(result.output)
+
+
+def test_respond_to_review_run_repairs_rejects_blank_task_verify(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "maintain",
+            "--github-pr",
+            "88",
+            "--respond-to-review",
+            "--write-tasks",
+            "--run-repairs",
+            "--task-verify",
+            "   ",
+        ],
+        color=False,
+    )
+
+    assert result.exit_code != 0
+    assert "--task-verify must not be blank." in unstyle(result.output)
+
+
+def test_respond_to_review_run_repairs_drains_scoped_repair_tasks(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    _write_task(tmp_path, _make_task("unrelated-ready", TaskStatus.pending, verify="pytest -q"))
+    monkeypatch.chdir(tmp_path)
+    captured: dict[str, object] = {}
+
+    def fake_scan(
+        repo_root: Path,
+        *,
+        include_github: bool = False,
+        github_pr: int | None = None,
+        github_issue: int | None = None,
+    ):
+        assert include_github is True
+        assert github_pr == 88
+        assert github_issue is None
+        from praetor.maintain import MaintainScan
+
+        return MaintainScan(
+            repo_root=str(repo_root),
+            github_pr_number=88,
+            github_pr_loop_state=PRLoopStateResult(
+                state="needs_repair",
+                actionable_review_items=[
+                    "Unresolved review thread: src/app.py:42 - Please clarify."
+                ],
+            ),
+        )
+
+    def fake_drain_queue(repo_root: Path, adapter: object, **kwargs: object) -> None:
+        captured["repo_root"] = repo_root
+        captured["adapter"] = adapter
+        captured.update(kwargs)
+
+    monkeypatch.setattr("praetor.commands.maintain.scan", fake_scan)
+    monkeypatch.setattr(
+        "praetor.commands.maintain.get_adapter", lambda *_args, **_kwargs: MockAdapter()
+    )
+    monkeypatch.setattr(
+        "praetor.commands.maintain.resolve_reviewer_adapter", lambda **_kwargs: None
+    )
+    monkeypatch.setattr("praetor.commands.maintain.drain_queue", fake_drain_queue)
+
+    result = runner.invoke(
+        app,
+        [
+            "maintain",
+            "--github-pr",
+            "88",
+            "--respond-to-review",
+            "--write-tasks",
+            "--run-repairs",
+            "--task-verify",
+            "pytest -q",
+            "--max-cycles",
+            "2",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    [repair_task_id] = payload["repair_task_ids"]
+    assert payload["run_repairs"] is True
+    assert payload["drain_started"] is True
+    assert payload["written_task_ids"] == [repair_task_id]
+    assert captured["repo_root"] == tmp_path
+    assert captured["max_iterations"] == 2
+    assert captured["task_ids"] == {repair_task_id}
+    tasks_by_id = {task.id: task for task in list_tasks(tmp_path)}
+    assert tasks_by_id["unrelated-ready"].status is TaskStatus.pending
+    assert tasks_by_id[repair_task_id].review == "strict"
+
+
+def test_respond_to_review_run_repairs_refreshes_latest_run_after_drain(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    events: list[str] = []
+
+    def fake_scan(
+        repo_root: Path,
+        *,
+        include_github: bool = False,
+        github_pr: int | None = None,
+        github_issue: int | None = None,
+    ):
+        del include_github, github_issue
+        from praetor.maintain import MaintainScan
+
+        return MaintainScan(
+            repo_root=str(repo_root),
+            github_pr_number=github_pr,
+            github_pr_loop_state=PRLoopStateResult(
+                state="needs_repair",
+                actionable_review_items=[
+                    "Unresolved review thread: src/app.py:42 - Please clarify."
+                ],
+            ),
+        )
+
+    def fake_drain_queue(repo_root: Path, adapter: object, **kwargs: object) -> None:
+        del repo_root, adapter, kwargs
+        events.append("drain")
+
+    def fake_latest_run(repo_root: Path) -> SimpleNamespace:
+        del repo_root
+        assert events == ["drain"]
+        return SimpleNamespace(id="run-after-drain", status="completed")
+
+    monkeypatch.setattr("praetor.commands.maintain.scan", fake_scan)
+    monkeypatch.setattr(
+        "praetor.commands.maintain.get_adapter", lambda *_args, **_kwargs: MockAdapter()
+    )
+    monkeypatch.setattr(
+        "praetor.commands.maintain.resolve_reviewer_adapter", lambda **_kwargs: None
+    )
+    monkeypatch.setattr("praetor.commands.maintain.drain_queue", fake_drain_queue)
+    monkeypatch.setattr("praetor.commands.maintain.load_latest_run", fake_latest_run)
+
+    result = runner.invoke(
+        app,
+        [
+            "maintain",
+            "--github-pr",
+            "88",
+            "--respond-to-review",
+            "--write-tasks",
+            "--run-repairs",
+            "--task-verify",
+            "pytest -q",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["drain_started"] is True
+    assert payload["latest_run"] == {"id": "run-after-drain", "status": "completed"}
+
+
+def test_respond_to_review_run_repairs_skips_stale_task_without_requested_verify(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    drain_calls: list[dict[str, object]] = []
+
+    def fake_scan(
+        repo_root: Path,
+        *,
+        include_github: bool = False,
+        github_pr: int | None = None,
+        github_issue: int | None = None,
+    ):
+        del include_github, github_issue
+        from praetor.maintain import MaintainScan
+
+        return MaintainScan(
+            repo_root=str(repo_root),
+            github_pr_number=github_pr,
+            github_pr_loop_state=PRLoopStateResult(
+                state="needs_repair",
+                actionable_review_items=[
+                    "Unresolved review thread: src/app.py:42 - Please clarify."
+                ],
+            ),
+        )
+
+    def fake_drain_queue(repo_root: Path, adapter: object, **kwargs: object) -> None:
+        del repo_root, adapter
+        drain_calls.append(kwargs)
+
+    monkeypatch.setattr("praetor.commands.maintain.scan", fake_scan)
+    monkeypatch.setattr(
+        "praetor.commands.maintain.get_adapter", lambda *_args, **_kwargs: MockAdapter()
+    )
+    monkeypatch.setattr(
+        "praetor.commands.maintain.resolve_reviewer_adapter", lambda **_kwargs: None
+    )
+    monkeypatch.setattr("praetor.commands.maintain.drain_queue", fake_drain_queue)
+
+    write_result = runner.invoke(
+        app,
+        [
+            "maintain",
+            "--github-pr",
+            "88",
+            "--respond-to-review",
+            "--write-tasks",
+            "--json",
+        ],
+    )
+    assert write_result.exit_code == 0
+    [task] = list_tasks(tmp_path)
+    assert task.verify is None
+
+    run_result = runner.invoke(
+        app,
+        [
+            "maintain",
+            "--github-pr",
+            "88",
+            "--respond-to-review",
+            "--write-tasks",
+            "--run-repairs",
+            "--task-verify",
+            "pytest -q",
+            "--json",
+        ],
+    )
+
+    assert run_result.exit_code == 0
+    payload = json.loads(run_result.output)
+    assert payload["written_task_ids"] == []
+    assert payload["skipped_task_ids"] == [task.id]
+    assert payload["repair_task_ids"] == []
+    assert payload["drain_started"] is False
+    assert drain_calls == []
+
+
+def test_respond_to_review_run_repairs_skips_stale_task_without_review_gate(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    drain_calls: list[dict[str, object]] = []
+
+    def fake_scan(
+        repo_root: Path,
+        *,
+        include_github: bool = False,
+        github_pr: int | None = None,
+        github_issue: int | None = None,
+    ):
+        del include_github, github_issue
+        from praetor.maintain import MaintainScan
+
+        return MaintainScan(
+            repo_root=str(repo_root),
+            github_pr_number=github_pr,
+            github_pr_loop_state=PRLoopStateResult(
+                state="needs_repair",
+                actionable_review_items=[
+                    "Unresolved review thread: src/app.py:42 - Please clarify."
+                ],
+            ),
+        )
+
+    def fake_drain_queue(repo_root: Path, adapter: object, **kwargs: object) -> None:
+        del repo_root, adapter
+        drain_calls.append(kwargs)
+
+    monkeypatch.setattr("praetor.commands.maintain.scan", fake_scan)
+    monkeypatch.setattr(
+        "praetor.commands.maintain.get_adapter", lambda *_args, **_kwargs: MockAdapter()
+    )
+    monkeypatch.setattr(
+        "praetor.commands.maintain.resolve_reviewer_adapter", lambda **_kwargs: None
+    )
+    monkeypatch.setattr("praetor.commands.maintain.drain_queue", fake_drain_queue)
+
+    write_result = runner.invoke(
+        app,
+        [
+            "maintain",
+            "--github-pr",
+            "88",
+            "--respond-to-review",
+            "--write-tasks",
+            "--task-verify",
+            "pytest -q",
+            "--json",
+        ],
+    )
+    assert write_result.exit_code == 0
+    [task] = list_tasks(tmp_path)
+    assert task.verify == "pytest -q"
+    assert task.review == "off"
+
+    run_result = runner.invoke(
+        app,
+        [
+            "maintain",
+            "--github-pr",
+            "88",
+            "--respond-to-review",
+            "--write-tasks",
+            "--run-repairs",
+            "--task-verify",
+            "pytest -q",
+            "--json",
+        ],
+    )
+
+    assert run_result.exit_code == 0
+    payload = json.loads(run_result.output)
+    assert payload["written_task_ids"] == []
+    assert payload["skipped_task_ids"] == [task.id]
+    assert payload["repair_task_ids"] == []
+    assert payload["drain_started"] is False
+    assert drain_calls == []
 
 
 def test_respond_to_review_waiting_state_stays_report_only(

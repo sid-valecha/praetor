@@ -211,8 +211,9 @@ Ship as plain markdown in `skills/`. Claude Code picks them up when the plugin i
 - Proposal verify hints are owner-driven, and `suggested_verify` defaulting is handled separately from scanned proposals.
 - Focused PR loop repair proposals are deterministic after PR #35: `praetor maintain --once --github-pr N --propose-tasks` turns `needs_repair` loop state into task-shaped proposals, merging regular focused-intake evidence for the same PR.
 - The first bounded review-response command slice is present: `praetor maintain --github-pr N --respond-to-review --max-cycles 3` exits cleanly for `clean`, keeps waiting/blocked report-only, and writes deterministic repair tasks only with explicit `--write-tasks`.
+- The authorized local repair drain slice is present: `--run-repairs --task-verify "..."` drains only generated repair tasks through existing executor, verify, and reviewer gates, bounded by `--max-cycles`.
 - No autonomous GitHub mutation, push, review-request, or merge loop is shipped yet; conservative defaults remain `report-only` and manual-review controlled.
-- Next in v1.3.x: keep focused PR review-response automation first: authorized task creation/drain/verify/reviewer, then explicit push and review-request flags. Watch mode remains after the bounded loop is stable.
+- Next in v1.3.x: keep focused PR review-response automation first: explicit push and review-request flags after local repair drain evidence is reliable. Watch mode remains after the bounded loop is stable.
 
 **v1.4 — Memory compounding**
 - Add `.praetor/learnings.md`

@@ -230,6 +230,7 @@ def write_proposals_to_tasks(
     repo_root: Path,
     proposals: list[MaintainItem],
     task_verify: str | None = None,
+    task_review: str = "off",
 ) -> tuple[list[str], list[str]]:
     """Create task files for proposals using deterministic IDs, skipping duplicates."""
     existing_tasks = list_tasks(repo_root)
@@ -257,6 +258,7 @@ def write_proposals_to_tasks(
             title=proposal.title or proposal.source,
             depends_on=[],
             verify=task_verify if task_verify is not None else proposal.suggested_verify,
+            review=task_review,
             context_files=proposal.context_files,
             body=_proposal_task_body(proposal),
             task_id=task_id,
